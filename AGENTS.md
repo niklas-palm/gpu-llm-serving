@@ -102,8 +102,8 @@ order and check each step before the next.
    build is +28% throughput with unmeasured quality, and an EAGLE-3 speculator adds +24% to +41% on any of
    them. The table in the README's Configure section has the ids and numbers. The default fleet is 16 and
    needs 128 vCPU of quota; with less, set `instanceCount` and `maxInstanceCount` in `config.local.yaml`.
-   For a first deployment suggest `useSpot: true`: on-demand g7e has had no capacity in several regions
-   at once, and spot in the same regions launched within a minute.
+   For a first deployment suggest `useSpot: true`: on-demand g7e.2xlarge had no capacity in two regions
+   on the same day, and spot in the same regions launched within a minute.
 3. **Gated model?** Create the `gpu-llm-serving/hf-token` secret in the deployment region and set
    `hfTokenSecretName`. A 401 while pulling means no token; a 403 means the token's account has not
    accepted that model's licence.

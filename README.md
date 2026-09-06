@@ -386,7 +386,7 @@ your gateway to it. Changes that touch only the fleet size, alarms or dashboard 
 python3 scripts/endpoint_info.py
 ```
 
-Prints the endpoint, API key, dashboard URL, and a working `curl` and Python snippet. Everything it shows
+Prints the endpoint, key, model name, dashboard URL, a `curl` and Python snippet, and the smoke-test and benchmark commands with your values filled in. Everything it shows
 is a stack output:
 
 | Output | What it is |
