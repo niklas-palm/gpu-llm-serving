@@ -91,7 +91,18 @@ LIFECYCLE = {
 }
 
 
-def config_region(default: str = "") -> str:
+def config_path() -> str:
+    """Honours $CONFIG, the same as infra/app.py. Without it, pointing CONFIG at another config file
+    deployed one region while this script pushed to the region in config.yaml."""
+    return os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
+
+
+def local_config_path() -> str:
+    """config.local.yaml next to whichever config is in use, the same rule as infra/app.py."""
+    return os.path.join(os.path.dirname(os.path.abspath(config_path())), "config.local.yaml")
+
+
+def config_region() -> str:
     """Region from config.yaml (and config.local.yaml), so it cannot drift from the deployment.
 
     Defaulting to a hardcoded region is a real trap rather than a convenience: omitting --region
@@ -99,13 +110,8 @@ def config_region(default: str = "") -> str:
     cross-region on every task start.
     """
     import yaml
-    # Honours $CONFIG, the same as infra/app.py. Without it, pointing CONFIG at another config file
-    # deployed one region while this script pushed to the region in config.yaml - exactly the drift
-    # this function exists to prevent.
-    config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
-    local_path = local_config_path()
-    region = default
-    for path in (config_path, local_path):
+    region = ""
+    for path in (config_path(), local_config_path()):
         if not os.path.exists(path):
             continue
         with open(path) as fh:
@@ -166,7 +172,7 @@ def ensure_bucket(s3, bucket: str, region: str, account: str) -> None:
     print(f"  created build bucket {bucket}")
 
 
-def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "aws") -> str:
+def ensure_role(iam, account: str, bucket: str, region: str, partition: str) -> str:
     """Create the role if missing, and ALWAYS reconcile its inline policy.
 
     Reconciling on every run rather than returning early for an existing role: a corrected policy in
@@ -194,11 +200,13 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "a
         ],
     }
     created = False
+    trust = json.dumps(trust_policy(account, region, partition))
     try:
         arn = iam.get_role(RoleName=ROLE_NAME)["Role"]["Arn"]
+        iam.update_assume_role_policy(RoleName=ROLE_NAME, PolicyDocument=trust)   # a role from an older run
     except iam.exceptions.NoSuchEntityException:
         arn = iam.create_role(
-            RoleName=ROLE_NAME, AssumeRolePolicyDocument=json.dumps(trust_policy(account, region, partition)),
+            RoleName=ROLE_NAME, AssumeRolePolicyDocument=trust,
             Description="CodeBuild: build the GPU serving image and push it to ECR",
         )["Role"]["Arn"]
         created = True
@@ -206,8 +214,6 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "a
 
     iam.put_role_policy(RoleName=ROLE_NAME, PolicyName="BuildAndPush",
                         PolicyDocument=json.dumps(policy))
-    iam.update_assume_role_policy(RoleName=ROLE_NAME,
-                                  PolicyDocument=json.dumps(trust_policy(account, region, partition)))
     if created:
         # A brand-new role is not immediately usable by CodeBuild; without this the first build fails
         # with "not authorized to perform sts:AssumeRole".
@@ -313,7 +319,11 @@ def wait_for(cb, build_id: str, region: str) -> bool:
                 if not ok:
                     status = build["buildStatus"]
                     print(f"\nBuild {status}: {STATUS_HINT.get(status, '')}")
-                    report(build)
+                    # The phases were printed as they completed; only their failure context is new.
+                    for p in build.get("phases", []):
+                        for ctx in p.get("contexts", []):
+                            if ctx.get("message"):
+                                print(f"    {p['phaseType']}: {ctx['message'][:200]}")
                     if logs.get("deepLink"):
                         print(f"\n  Full log: {logs['deepLink']}")
                     print(f"  Or: aws logs tail /aws/codebuild/{PROJECT_NAME} --since 30m "
@@ -364,21 +374,6 @@ def main() -> int:
     if not region:
         sys.exit("no region: set `region` in config.yaml, or pass --region")
 
-    cb = boto3.client("codebuild", region_name=region)
-    if a.status:
-        builds = cb.batch_get_builds(ids=[a.status])["builds"]
-        if not builds:
-            sys.exit(f"no build found with id {a.status} (build history ages out, and the id must "
-                     f"include the project name).")
-        report(builds[0])
-        ok = builds[0].get("buildStatus") == "SUCCEEDED"
-        if ok and a.write_config:
-            ident = boto3.client("sts", region_name=region).get_caller_identity()
-            dns = "amazonaws.com.cn" if ident["Arn"].split(":")[1] == "aws-cn" else "amazonaws.com"
-            write_image_uri(f"{ident['Account']}.dkr.ecr.{region}.{dns}/{REPO_NAME}:{TAG}")
-        # Non-zero on a failed build, so this is usable in a script rather than always succeeding.
-        return 0 if ok else 1
-
     ident = boto3.client("sts", region_name=region).get_caller_identity()
     account = ident["Account"]
     # From the caller's own ARN, so the policies below are correct in aws-us-gov and
@@ -390,6 +385,19 @@ def main() -> int:
     ecr_host = f"{account}.dkr.ecr.{region}.{dns}"
     uri = f"{ecr_host}/{REPO_NAME}:{TAG}"
     bucket = f"{REPO_NAME}-build-{account}-{region}"
+
+    cb = boto3.client("codebuild", region_name=region)
+    if a.status:
+        builds = cb.batch_get_builds(ids=[a.status])["builds"]
+        if not builds:
+            sys.exit(f"no build found with id {a.status} (build history ages out, and the id must "
+                     f"include the project name).")
+        report(builds[0])
+        ok = builds[0].get("buildStatus") == "SUCCEEDED"
+        if ok and a.write_config:
+            write_image_uri(uri)
+        # Non-zero on a failed build, so this is usable in a script rather than always succeeding.
+        return 0 if ok else 1
 
     print(f"Building {uri}\n  region: {region}   (nothing large crosses your connection)")
     ensure_repo(boto3.client("ecr", region_name=region))

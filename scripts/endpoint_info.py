@@ -11,13 +11,10 @@ it" answer, and it should not require reading anything.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DEFAULT_STACK = "GpuLlmServing"
 
 
