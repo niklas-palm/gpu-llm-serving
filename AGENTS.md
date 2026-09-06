@@ -86,17 +86,47 @@ Code comments explain why, not what, and record the failure that motivated a non
 - **Dashboard or alarm**: widget titles are questions in plain language; alarm descriptions are written
   for someone on a phone who did not deploy this. Test the threshold value.
 
+## Helping someone deploy and use this
+
+Most people arriving with an agent want a running endpoint, not a code change. Walk them through this
+order and check each step before the next.
+
+1. **Preflight, before anything is created.** Region offers `g7e.2xlarge`
+   (`aws ec2 describe-instance-type-offerings ... --location-type availability-zone`); if only some
+   zones do, put them in `availabilityZones`. Quota for the purchase model they will use: on-demand
+   `L-DB2E81BA`, spot `L-3819A6DF`, in vCPU, 8 per instance. `cdk bootstrap` once per account and
+   region. CloudFront VPC origins must be supported in the region (they are in all commercial regions
+   that offer g7e as of this writing).
+2. **Configure.** `region`, `instanceType`, `modelId` in `config.yaml`. The default fleet is 16 and
+   needs 128 vCPU of quota; with less, set `instanceCount` and `maxInstanceCount` in `config.local.yaml`.
+   For a first deployment suggest `useSpot: true`: on-demand g7e has had no capacity in several regions
+   at once, and spot in the same regions launched within a minute.
+3. **Gated model?** Create the `gpu-llm-serving/hf-token` secret in the deployment region and set
+   `hfTokenSecretName`. A 401 while pulling means no token; a 403 means the token's account has not
+   accepted that model's licence.
+4. **Build, then deploy.** `build_image.py --write-config`, then `cdk deploy`. Three to five minutes
+   into the deploy, read the ASG scaling activities. `InsufficientInstanceCapacity` or
+   `UnfulfillableCapacity` will not resolve soon: `cdk destroy`, switch purchase model, deploy again.
+   Do not let CloudFormation wait; it will, for up to an hour.
+5. **Confirm.** `endpoint_info.py`, then the smoke-test command it prints. Then `benchmark.py` if they
+   need capacity numbers; set `maxInstanceCount` equal to `instanceCount` first.
+6. **Read the dashboard with them.** `DashboardUrl` output. Top rows are the load balancer's view,
+   bottom row is the engine's: waiting requests mean saturation, KV cache near 100% means preemption
+   next, any preemptions mean lost work. Alarms fire only on sustained conditions.
+7. **Leaving.** Park with both counts at 0 and deploy; instances are gone in about five minutes. Destroy
+   only after they are gone. A destroy started while the CloudFront VPC origin is still `Deploying`
+   fails; wait for `Deployed` and retry.
+
+Names that are account-wide, not regional, and already carry the region so two stacks can coexist:
+the CloudWatch dashboard and the CloudFront VPC origin. IAM roles are CDK-generated and unique.
+
 ## Operating a test deployment
 
 - Use `instanceCount: 6`, `maxInstanceCount: 8`, `useSpot: true` in `config.local.yaml`. The shipped
-  default is 16 and needs a quota increase; on-demand g7e often has no capacity.
-- A few minutes into a deploy, read the ASG scaling activities. CloudFormation waits up to an hour on a
-  service that can never place a task; the ASG says why in seconds.
+  default is 16 and needs a quota increase.
 - `UPDATE_IN_PROGRESS` blocks further deploys. `aws cloudformation cancel-update-stack` rolls back to
   the previous task definition.
-- Park before you stop: `instanceCount: 0`, `maxInstanceCount: 0`, deploy. Instances are gone in about
-  five minutes. Destroy only after they are gone, or the ECS service stalls for 25 minutes.
-- GPU instances are the entire cost. Never leave them running after a test.
+- GPU instances are the entire cost. Never leave them running after a test unless asked to.
 
 ## Commits
 
