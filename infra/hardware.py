@@ -23,7 +23,10 @@ from urllib.parse import urlparse
 
 # GPU memory bandwidth, GB/s. Decode streams the model's activated weights out of VRAM once per
 # generated token, so this sets the ceiling on tokens/sec for a single request.
-GPU_MEMORY_BANDWIDTH_GBS = 1792
+# 1,597, not 1,792: g7e carries the RTX PRO 6000 Blackwell SERVER Edition, whose GDDR7 runs at 25 Gbps
+# (nvidia-smi reports a 12,481 MHz memory clock, two bits per clock per pin) on a 512-bit bus. The 1,792
+# figure is the workstation card at 28 Gbps. The difference is 11% on every ceiling derived here.
+GPU_MEMORY_BANDWIDTH_GBS = 1597
 # Every g7e size carries the same GPU - an NVIDIA RTX PRO 6000 Blackwell. Larger sizes add GPUs, vCPU
 # and host RAM, never a faster card, so instance choice is a question of how many GPUs you
 # need rather than which is quicker.

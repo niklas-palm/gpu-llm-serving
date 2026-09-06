@@ -35,7 +35,8 @@ Two consequences:
 
 ## Choosing an instance type
 
-Every g7e size carries the same GPU: 96 GiB of VRAM at roughly 1,792 GB/s. Larger sizes add GPUs, vCPU
+Every g7e size carries the same GPU: 96 GiB of VRAM at about 1,600 GB/s (the Server Edition runs its GDDR7
+at 25 Gbps; the 1,792 GB/s often quoted is the workstation card). Larger sizes add GPUs, vCPU
 and host RAM.
 
 Per-GPU columns:
