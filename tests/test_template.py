@@ -1222,3 +1222,20 @@ def test_config_edge_cases_are_config_errors_not_tracebacks():
     env = {e["Name"]: e["Value"] for e in
            only(synth(quantization="  "), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
     assert "QUANTIZATION" not in env, "blank quantization means none, not a flag with spaces in it"
+
+
+def test_instance_draining_is_ecs_managed_with_no_lambda_hook():
+    """CDK's default adds a Lambda-backed lifecycle hook that ECS managed draining makes redundant,
+    and whose log group outlives cdk destroy."""
+    template = synth()
+    assert not [r for r in template["Resources"].values() if r["Type"] == "AWS::Lambda::Function"]
+    provider = only(template, "AWS::ECS::CapacityProvider")["AutoScalingGroupProvider"]
+    assert provider["ManagedDraining"] == "ENABLED"
+
+
+def test_the_engine_never_blocks_on_logging_and_the_sidecar_restarts():
+    defs = only(synth(), "AWS::ECS::TaskDefinition")["ContainerDefinitions"]
+    vllm = next(c for c in defs if c["Name"] == "vllm")
+    assert vllm["LogConfiguration"]["Options"]["mode"] == "non-blocking"
+    metrics = next(c for c in defs if c["Name"] == "metrics")
+    assert metrics["RestartPolicy"]["Enabled"] is True

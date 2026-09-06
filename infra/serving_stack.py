@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 import sys
 
-from aws_cdk import CfnOutput, Duration, RemovalPolicy, SecretValue, Stack
+from aws_cdk import CfnOutput, Duration, RemovalPolicy, Size, Stack
 from aws_cdk import aws_autoscaling as autoscaling
 from aws_cdk import aws_cloudfront as cloudfront
 from aws_cdk import aws_cloudfront_origins as origins
@@ -199,8 +199,9 @@ class ServingStack(Stack):
             # Drain the task when a spot reclaim notice arrives, instead of letting the instance
             # vanish mid-request. Without this the ECS agent does not deregister the target, so the
             # load balancer keeps sending traffic to a dead task until the health check fails it -
-            # interval x threshold, up to ~150 s of 502s. Draining deregisters immediately and lets
-            # in-flight requests finish. Set here rather than through the capacity provider's
+            # interval x threshold, up to ~150 s of 502s. Draining deregisters immediately; requests
+            # still running when the two-minute reclaim notice expires die with the instance. Set here
+            # rather than through the capacity provider's
             # `spot_instance_draining`, which the construct only writes when the ASG has a `spotPrice`;
             # a mixed-instances policy does not set one, so that option is a silent no-op here.
             gpu_user_data.add_commands(
@@ -354,6 +355,10 @@ class ServingStack(Stack):
             # tasks - which also means a deliberate scale to zero waits on it. The measured ~3 minute
             # teardown depends on this being off.
             enable_managed_termination_protection=False,
+            # ECS drains the instance itself when the ASG terminates it. Without this CDK adds its own
+            # Lambda-backed lifecycle hook that does the same job, plus a Lambda and a log group that
+            # cdk destroy leaves behind.
+            enable_managed_draining=True,
         )
         cluster.add_asg_capacity_provider(capacity_provider)
 
@@ -573,15 +578,20 @@ class ServingStack(Stack):
             gpu_count=tuning["tensorParallel"],
             environment=env,
             secrets=container_secrets or None,
-            logging=ecs.LogDrivers.aws_logs(stream_prefix="vllm", log_group=log_group),
+            # Non-blocking: the default mode blocks the engine's stdout when CloudWatch Logs is
+            # unreachable, and vLLM logs per request, so a logging outage would stall inference.
+            logging=ecs.LogDrivers.aws_logs(stream_prefix="vllm", log_group=log_group,
+                                            mode=ecs.AwsLogDriverMode.NON_BLOCKING,
+                                            max_buffer_size=Size.mebibytes(25)),
             port_mappings=[ecs.PortMapping(container_port=CONTAINER_PORT)],
             # /dev/shm, set UNCONDITIONALLY - do not make this depend on tensorParallel. The per-GPU
             # workers pass tensors through POSIX shared memory, and Docker's 64 MiB default kills any
             # degree above 1 seconds after start. TP=1 never touches that path, so a conditional value
             # looks fine until someone raises the degree. See docs/troubleshooting.md.
             linux_parameters=ecs.LinuxParameters(self, "Linux", shared_memory_size=8192),
-            # Paired with deregistration_delay above: ECS sends SIGTERM and then waits this long
-            # before SIGKILL. The default is 30 s, which cuts off a generation still in progress.
+            # What protects an in-flight request on scale-in or redeploy is the 180 s deregistration
+            # delay above: the target is drained before ECS sends SIGTERM, and this vLLM aborts
+            # in-flight requests on SIGTERM. This is the wait before SIGKILL after that.
             stop_timeout=Duration.seconds(120),
         )
         # One copy of the weights per instance, shared by every task and surviving restarts.
@@ -642,6 +652,10 @@ service:
             # Not essential: if the collector dies the engine keeps serving and the dashboard's engine
             # row goes blank. The alternative - a metrics bug taking down inference - is the wrong trade.
             essential=False,
+            # ECS never restarts a non-essential container on its own, so without this an OOM at the
+            # memory limit would silently blank this engine's share of the metrics until the task
+            # was replaced.
+            enable_restart_policy=True, restart_attempt_period=Duration.seconds(60),
             environment={"AOT_CONFIG_CONTENT": collector_config},
             logging=ecs.LogDrivers.aws_logs(stream_prefix="metrics", log_group=log_group),
         )
