@@ -18,7 +18,7 @@ WHY CODEBUILD AND NOT `docker build`
       * The same path works in CI later without Docker-in-Docker.
 
 Everything it creates - the ECR repository, the build bucket, the IAM role, the CodeBuild project - is
-created only if missing, so re-running is safe and costs nothing extra.
+created if missing and their policies brought up to date, so re-running is safe and costs nothing extra.
 """
 
 from __future__ import annotations

@@ -589,7 +589,7 @@ endpoint and security group.
 `cdk destroy` does not touch what `build_image.py` created: the ECR repository `gpu-llm-serving` (image
 storage, the one that costs), the build bucket `gpu-llm-serving-build-<account>-<region>`, the CodeBuild
 project and the role `GpuLlmServingCodeBuildRole`. Nor the `gpu-llm-serving/hf-token` secret if you made
-one.
+one. The role is shared by every region you built in; delete it last, once no CodeBuild project remains.
 
 ```bash
 REGION=eu-west-2        # the region in your config
@@ -687,7 +687,8 @@ docs/
 tests/
   test_hardware.py        instance catalog, derived values, config validation
   test_template.py        properties of the synthesised template a deployment depends on
-  test_app.py             the API key file side effect in app.py
+  test_app.py             config loading, validation, the API key file
+  test_scripts.py         the scripts import and their --help runs; region and image follow $CONFIG
 ```
 
 Run the tests with `python3 -m pytest tests/ -q`. They need no AWS credentials and cover failures that

@@ -42,7 +42,7 @@ infra/serving_stack.py   the stack: VPC, ECS, ALB, CloudFront, service, metrics 
 container/serve          entrypoint: environment variables to vLLM flags; baked into the image
 container/Dockerfile     vLLM base image plus the entrypoint
 scripts/                 build_image, endpoint_info, test_endpoint, benchmark
-tests/                   test_hardware (catalog, validation), test_template (synthesised template), test_app (config loading, key file)
+tests/                   test_hardware (catalog, validation), test_template (synthesised template), test_app (config loading, key file), test_scripts (the scripts import, --help runs, $CONFIG is followed)
 docs/tuning.md           measurements per config key, sizing, autoscaling, reading the dashboard
 docs/troubleshooting.md  symptom, cause, fix
 ```
