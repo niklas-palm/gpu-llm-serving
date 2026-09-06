@@ -90,16 +90,26 @@ def _persist_generated_api_key() -> str:
         # onto it - and because the key is only generated once, every later deploy then fails on a YAML
         # scanner error until someone repairs the file by hand.
         needs_newline = False
+        body = ""
         if exists:
             with open(LOCAL_CONFIG_PATH) as fh:
                 body = fh.read()
             needs_newline = bool(body) and not body.endswith("\n")
-        with open(LOCAL_CONFIG_PATH, "a") as fh:
-            if not exists:
-                fh.write("# Local overrides, deep-merged over config.yaml. Gitignored.\n")
-            elif needs_newline:
-                fh.write("\n")
-            fh.write(f"apiKey: {key}\n")
+        # A blank `apiKey:` line already in the file is replaced, not appended to. Appending produced
+        # two keys, and the file only worked because PyYAML takes the last.
+        if exists and any(line.split("#", 1)[0].strip() in ("apiKey:", 'apiKey: ""', "apiKey: ''")
+                          for line in body.splitlines()):
+            lines = [f"apiKey: {key}" if line.split("#", 1)[0].strip().startswith("apiKey:") else line
+                     for line in body.splitlines()]
+            with open(LOCAL_CONFIG_PATH, "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+        else:
+            with open(LOCAL_CONFIG_PATH, "a") as fh:
+                if not exists:
+                    fh.write("# Local overrides, deep-merged over config.yaml. Gitignored.\n")
+                elif needs_newline:
+                    fh.write("\n")
+                fh.write(f"apiKey: {key}\n")
     except OSError as e:
         raise ConfigError(
             f"no apiKey configured, and {LOCAL_CONFIG_PATH} could not be written ({e}).\n"
@@ -181,4 +191,5 @@ def main() -> None:
     app.synth()
 
 
-main()
+if __name__ == "__main__":
+    main()
