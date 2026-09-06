@@ -182,9 +182,11 @@ def main() -> int:
         check_streaming(url, a.key, model)
         if a.concurrency > 1:
             check_concurrency(url, a.key, model, a.concurrency)
-    except requests.RequestException as e:
-        # After a passing /health a transient timeout is a result, not a crash.
-        print(f"\nEndpoint stopped answering mid-test: {type(e).__name__}. See docs/troubleshooting.md.")
+    except (requests.RequestException, AttributeError, TypeError, KeyError, IndexError) as e:
+        # After a passing /health a transient timeout is a result, not a crash. So is a 200 whose JSON
+        # is not the shape the API promises: something other than the engine is answering.
+        print(f"\nEndpoint stopped answering as expected mid-test: {type(e).__name__}. "
+              "See docs/troubleshooting.md.")
         return 1
 
     print()

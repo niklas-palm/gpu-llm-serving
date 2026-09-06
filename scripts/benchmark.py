@@ -64,13 +64,15 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int,
                     u = r.json().get("usage") or {}
                     with lock:
                         stats["ok"] += 1
-                        stats["in"] += u.get("input_tokens", 0)
-                        stats["out"] += u.get("output_tokens", 0)
+                        stats["in"] += int(u.get("input_tokens") or 0)
+                        stats["out"] += int(u.get("output_tokens") or 0)
                         stats["lat"].append(dt)
                 else:
                     with lock:
                         stats["fail"] += 1
-            except requests.RequestException:
+            # A body that is not the promised shape is a failure too. Left uncaught, it killed the
+            # thread silently and the row reported a plausible number at lower concurrency.
+            except (requests.RequestException, ValueError, AttributeError, TypeError):
                 with lock:
                     stats["fail"] += 1
 
