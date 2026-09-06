@@ -360,6 +360,13 @@ aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$
   --query 'services[0].{running:runningCount,desired:desiredCount,pending:pendingCount}'
 ```
 
+### Changing the model, tuning or image later
+
+Edit the config and `cdk deploy` again. A change to the task definition replaces **every engine at
+once**: with one GPU per task the new task cannot start until the old one has released the GPU, so the
+endpoint returns 503 for the reload, five to fifteen minutes. Plan it, or run a second stack and move
+your gateway to it. Changes that touch only the fleet size, alarms or dashboard do not restart engines.
+
 ### 4. Call it
 
 ```bash
