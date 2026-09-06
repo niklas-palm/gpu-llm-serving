@@ -1175,6 +1175,22 @@ def test_whitespace_only_extra_args_add_nothing(tmp_path):
     assert code == 0 and "" not in argv
 
 
+def test_the_entrypoint_starts_when_extra_args_is_unset(tmp_path):
+    """The stack sets EXTRA_ARGS only when extraArgs is configured, so this is the default deployment.
+    `${EXTRA_ARGS// /}` under `set -u` aborted with 'unbound variable' in bash 4 and 5; the three
+    tests above all set the variable, and the local bash 3.2 tolerated it, so nothing caught it."""
+    code, argv, err = _run_entrypoint(tmp_path)   # no EXTRA_ARGS at all
+    assert code == 0, err
+    assert argv[:2] == ["serve", "--model"] or "--model" in argv
+
+
+def test_an_empty_last_extra_arg_is_kept(tmp_path):
+    """"\\0".join() leaves the last element unterminated, so mapfile dropped a trailing empty
+    argument: --served-model-name "" reached the engine as --served-model-name alone."""
+    code, argv, _ = _run_entrypoint(tmp_path, EXTRA_ARGS='--served-model-name ""')
+    assert code == 0 and argv[-2:] == ["--served-model-name", ""]
+
+
 def test_config_edge_cases_are_config_errors_not_tracebacks():
     """Each of these reached a traceback or a broken task definition from the correctness review:
     an ARN where a secret name belongs, a parameter count that overflows, padding in quantization."""

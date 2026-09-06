@@ -52,18 +52,21 @@ fi
 
 # Escape hatch for any flag this script does not model. Keeps the container useful without a rebuild
 # every time you want to try something.
-if [[ -n "${EXTRA_ARGS// /}" ]]; then
+# The variable is unset unless extraArgs is configured, and under `set -u` a pattern substitution on an
+# unset variable aborts the script in bash 4 and 5 (only macOS's bash 3.2 tolerates it).
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+if [[ -n "${EXTRA_ARGS//[[:space:]]/}" ]]; then
   # shlex, not shell word-splitting: quoted arguments with spaces survive, and a * is not a glob.
-  # NUL-separated so a newline inside a quoted value stays inside it; a value shlex cannot parse
-  # stops the start, because silently starting without the flags is how a fix appears not to work.
-  # Through a file, not a variable: bash variables cannot hold NUL.
+  # NUL-terminated so a newline inside a quoted value stays inside it and an empty last argument is
+  # kept; a value shlex cannot parse stops the start, because silently starting without the flags is
+  # how a fix appears not to work. Through a file, not a variable: bash variables cannot hold NUL.
   EXTRA_FILE=$(mktemp)
-  if ! python3 -c 'import shlex, sys; sys.stdout.write("\0".join(shlex.split(sys.argv[1])))' "${EXTRA_ARGS}" > "${EXTRA_FILE}"; then
+  trap 'rm -f "${EXTRA_FILE}"' EXIT
+  if ! python3 -c 'import shlex, sys; sys.stdout.write("".join(a + "\0" for a in shlex.split(sys.argv[1])))' "${EXTRA_ARGS}" > "${EXTRA_FILE}"; then
     echo "[serve] extraArgs is not shell-parseable: ${EXTRA_ARGS}" >&2
     exit 1
   fi
   mapfile -d '' -t EXTRA < "${EXTRA_FILE}"
-  rm -f "${EXTRA_FILE}"
   ARGS+=("${EXTRA[@]}")
 fi
 
