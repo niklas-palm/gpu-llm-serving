@@ -41,8 +41,9 @@ def test_region_and_image_follow_the_config_in_use(tmp_path, monkeypatch):
     assert "apiKey: keep-me-1234567890" in body and body.count("image:") == 1
 
 
-def test_codebuild_may_assume_the_role_only_from_this_account_and_project():
+def test_codebuild_may_assume_the_role_only_from_this_account_and_project_in_any_region():
     bi = _load("build_image")
     cond = bi.trust_policy("111122223333", "eu-west-2", "aws")["Statement"][0]["Condition"]
     assert cond["StringEquals"] == {"aws:SourceAccount": "111122223333"}
-    assert cond["ArnLike"] == {"aws:SourceArn": "arn:aws:codebuild:eu-west-2:111122223333:project/gpu-llm-serving-build"}
+    assert cond["ArnLike"] == {"aws:SourceArn": "arn:aws:codebuild:*:111122223333:project/gpu-llm-serving-build"}, \
+        "any region: one account-wide role serves every region this account builds in"

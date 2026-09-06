@@ -73,7 +73,10 @@ def trust_policy(account: str, region: str, partition: str) -> dict:
             "Action": "sts:AssumeRole",
             "Condition": {
                 "StringEquals": {"aws:SourceAccount": account},
-                "ArnLike": {"aws:SourceArn": f"arn:{partition}:codebuild:{region}:{account}:project/{PROJECT_NAME}"},
+                # Any region: the role is account-wide and one account builds in more than one region
+                # (trying another region for capacity is a documented step). Scoping it to the region
+                # of the last run broke the previous region's project at start_build.
+                "ArnLike": {"aws:SourceArn": f"arn:{partition}:codebuild:*:{account}:project/{PROJECT_NAME}"},
             },
         }],
     }
@@ -193,10 +196,10 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str) -> 
              "Action": ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload",
                         "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart",
                         "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-             "Resource": f"arn:{partition}:ecr:{region}:{account}:repository/{REPO_NAME}"},
+             "Resource": f"arn:{partition}:ecr:*:{account}:repository/{REPO_NAME}"},
             {"Sid": "ReadBuildContext", "Effect": "Allow",
              "Action": ["s3:GetObject", "s3:GetObjectVersion"],
-             "Resource": f"arn:{partition}:s3:::{bucket}/build/*"},
+             "Resource": f"arn:{partition}:s3:::{REPO_NAME}-build-{account}-*/build/*"},
         ],
     }
     created = False
