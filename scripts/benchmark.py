@@ -156,10 +156,14 @@ def main() -> int:
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
 
-    levels = [int(x) for x in a.concurrency.split(",") if x.strip()]
-    if not levels or min(levels) < 1 or a.processes < 1 or a.seconds <= 0:
+    try:
+        levels = [int(x) for x in a.concurrency.split(",") if x.strip()]
+    except ValueError:
+        sys.exit(f"--concurrency must be comma-separated integers (got {a.concurrency!r})")
+    if (not levels or min(levels) < 1 or a.processes < 1 or a.seconds <= 0 or a.warmup_seconds < 0
+            or a.input_tokens < 1 or a.output_tokens < 1):
         sys.exit("--concurrency needs one or more levels of at least 1, --processes at least 1, "
-                 "--seconds above 0")
+                 "--seconds above 0, --warmup-seconds at least 0, token counts at least 1")
     model = served_model(a.url, a.key)
     print(f"model {model}\n{a.input_tokens} input / {a.output_tokens} output tokens, "
           f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts, {a.seconds:g}s per level "
