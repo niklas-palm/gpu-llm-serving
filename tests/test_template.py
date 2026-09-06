@@ -981,17 +981,6 @@ def test_the_widgets_are_titled_as_questions_not_as_metric_names():
                    for t in titles), titles
 
 
-def test_the_text_widget_states_what_normal_is_for_this_fleet():
-    """Every graph below it is unreadable without knowing the expected task count and budget, and both
-    have to come from the configuration or the panel drifts away from what was deployed."""
-    template = synth(instanceCount=3, maxInstanceCount=6, latencyAlarmSeconds=6)
-    text = [w["properties"]["markdown"] for w in dashboard_widgets(template)
-            if w["type"] == "text"][0]
-    assert "3 instance(s)" in text
-    assert "3 task(s)" in text, "one engine per GPU on a 1-GPU instance"
-    assert "6 seconds at p95" in text
-
-
 def test_the_latency_alarm_reaches_both_the_graph_and_the_alarm():
     """One number, two places. Hardcoding either would let the graph and the alarm disagree about what
     "too slow" means, which is worse than having neither."""
@@ -1007,8 +996,6 @@ def test_no_latency_alarm_and_no_budget_line_unless_asked():
     assert "T-too-slow" not in alarms(template)
     w = widget(template, "Is it slow?")
     assert "annotations" not in w or not w["annotations"].get("horizontal")
-    assert "at p95" not in [x["properties"]["markdown"] for x in dashboard_widgets(template)
-                            if x["type"] == "text"][0]
 
 
 def test_the_latency_alarm_is_a_plain_percentile_alarm():
@@ -1072,17 +1059,6 @@ def test_a_topic_arn_that_is_not_one_is_refused_at_synth(bad):
     and a notification that was never wired up fails silently, which is the whole risk."""
     with pytest.raises(ConfigError):
         synth(alarmTopicArn=bad)
-
-
-def test_a_parked_fleet_says_so_rather_than_showing_empty_graphs():
-    """Zero instances is a supported state - it is how you stop paying for GPUs without tearing the
-    stack down - so every graph is legitimately empty and the endpoint legitimately 503s. Saying that is
-    the difference between a reader concluding "parked, as intended" and "everything is broken"."""
-    template = synth(instanceCount=0, maxInstanceCount=0)
-    text = [w["properties"]["markdown"] for w in dashboard_widgets(template)
-            if w["type"] == "text"][0]
-    assert "parked" in text
-    assert "0 task(s)" not in text
 
 
 # ------------------------------------------------------------------ engine metrics sidecar
@@ -1164,10 +1140,6 @@ def test_the_dashboard_shows_the_engine_row_from_the_same_namespace_the_collecto
         w = widget(template, fragment)
         namespaces = {m[0] for m in w["metrics"] if isinstance(m[0], str) and not m[0].startswith(".")}
         assert namespaces == {"T/Engine"}, (fragment, namespaces)
-    text = [w["properties"]["markdown"] for w in dashboard_widgets(template)
-            if w["type"] == "text"][0]
-    assert "Deliberately not here" not in text
-    assert "inside the engines" in text
 
 
 def test_security_group_rule_descriptions_use_only_characters_ec2_accepts():

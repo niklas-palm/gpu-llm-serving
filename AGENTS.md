@@ -1,84 +1,112 @@
 # AGENTS.md
 
-Instructions for coding agents working in this repository. Humans: the README is for you; this file is
-short on purpose.
+Instructions for coding agents working in this repository. Read it fully before changing anything.
+Humans: start with `README.md`.
 
-## What this is
+## Project
 
-A CDK stack that serves an open-weight LLM with vLLM on ECS GPU instances (g7e), behind an internal ALB
-and CloudFront, with an OpenAI-compatible API. One config file. The docs are the product as much as the
-code: every number in them was measured on this hardware.
+One CDK stack that serves an open-weight LLM with vLLM on ECS GPU instances (g7e), behind an internal
+ALB and CloudFront, with an OpenAI-compatible API and a Bearer key. One config file. The docs carry as
+much value as the code: every number in them was measured on this hardware, and the point of the sample
+is that a reader can deploy it, understand it, and tune it without reading the source.
 
-## Layout
+Python 3.11, CDK v2 (Python), pytest. No other build system.
 
-```
-config.yaml              the only file a user edits; every key has a comment and a docs/tuning.md section
-config.local.yaml        gitignored overrides (API key, image URI, account-specific values); never commit
-infra/app.py             loads and validates config, generates the API key once, synthesises
-infra/hardware.py        instance catalog and derived values; pure functions, no AWS calls
-infra/serving_stack.py   the stack: VPC, ECS, ALB, CloudFront, service, metrics sidecar, dashboard
-container/serve          entrypoint: environment to vLLM flags; baked into the image
-container/Dockerfile     vLLM base image plus the entrypoint
-scripts/build_image.py   builds and pushes the image in CodeBuild
-scripts/endpoint_info.py prints endpoint, key, model name, dashboard, ready-to-paste requests
-scripts/test_endpoint.py smoke test against a deployed endpoint
-tests/                   template and catalog tests; no AWS credentials needed
-docs/tuning.md           measurements and how to read your own
-docs/troubleshooting.md  symptom, cause, fix
+## Setup
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && npm install -g aws-cdk
 ```
 
 ## Commands
 
-```bash
-python3 -m pytest tests/ -q                 # before every commit; must pass, no credentials needed
-cd infra && npx cdk synth                   # needs credentials (one prefix-list lookup at synth)
-cd infra && npx cdk deploy                  # ~15 min infrastructure, then minutes of model load
-python3 scripts/build_image.py              # required after ANY change under container/
-python3 scripts/endpoint_info.py            # then run the smoke-test command it prints
+| command | when |
+|---|---|
+| `python3 -m pytest tests/ -q` | before every commit; must pass; needs no AWS credentials |
+| `cd infra && npx cdk synth` | after any stack change; needs credentials (one prefix-list lookup) |
+| `cd infra && npx cdk deploy` | ~15 min for infrastructure, then minutes while the model loads |
+| `python3 scripts/build_image.py` | after ANY change under `container/`; a deploy alone runs the old entrypoint |
+| `python3 scripts/endpoint_info.py` | prints endpoint, key, model name, dashboard, and the two commands below |
+| `python3 scripts/test_endpoint.py <url> --key <key>` | smoke test: health, both APIs, streaming, 64 concurrent |
+| `python3 scripts/benchmark.py <url> --key <key>` | concurrency sweep; the numbers to size a fleet from |
+
+## Layout
+
+```
+config.yaml              the only file a user edits; each key has a comment and a docs/tuning.md section
+config.local.yaml        gitignored overrides: API key, image URI, anything account-specific
+infra/app.py             loads and validates config, generates the API key once, synthesises
+infra/hardware.py        instance catalog and derived values; pure functions, no AWS calls
+infra/serving_stack.py   the stack: VPC, ECS, ALB, CloudFront, service, metrics sidecar, dashboard, alarms
+container/serve          entrypoint: environment variables to vLLM flags; baked into the image
+container/Dockerfile     vLLM base image plus the entrypoint
+scripts/                 build_image, endpoint_info, test_endpoint, benchmark
+tests/                   test_hardware (catalog, validation), test_template (synthesised template)
+docs/tuning.md           measurements per config key, sizing, autoscaling, reading the dashboard
+docs/troubleshooting.md  symptom, cause, fix
 ```
 
 ## Rules
 
 1. **Do not add machinery for problems that have not happened.** Every construct, script and config key
-   here earned its place by a failure or a measurement. A new one needs the same.
-2. **Config lives in `config.yaml`.** A new key needs: a comment saying what it does and the one trap,
-   a default, validation in `hardware.py` or `app.py` with a one-line `ConfigError`, a test, and a
-   section in `docs/tuning.md` that the comment names. Zero is the convention for "let the engine
-   decide".
-3. **Nothing account-specific in tracked files.** No account ids (use `111122223333` in tests), no
-   hostnames, no tokens, no company or customer names. `config.local.yaml` and `cdk.context.json` are
-   gitignored for this reason.
-4. **Changes under `container/` need an image rebuild before they exist.** A deploy alone runs the old
-   entrypoint. The smoke test reads the served model name from `/v1/models` so it cannot tell you; check
-   the entrypoint line in the task log.
-5. **Tests must stay credential-free.** Lookups are seeded in `AZ_CONTEXT` in `tests/test_template.py`.
-6. **Synth cannot catch wrong values in valid templates.** IAM actions, header names, EC2 rule
-   description characters, alarm thresholds: write a test that asserts the value, not just the presence.
-7. **Do not remove a documented failure or measurement to shorten a file.** Shorten the prose around it.
+   here earned its place by a failure or a measurement. A new one needs the same. Removing code is
+   usually the better change.
+2. **A new config key needs all of:** a comment in `config.yaml` saying what it does and the one trap,
+   a default, validation in `hardware.py` or `app.py` raising a one-line `ConfigError`, a test, and a
+   section in `docs/tuning.md` that the comment names. `0` means "let the engine decide".
+3. **Nothing account-specific in tracked files.** Account ids (`111122223333` in tests only), hostnames,
+   distribution ids, tokens, keys, company or customer names. If it came from a real deployment, it
+   belongs in `config.local.yaml` or nowhere.
+4. **Tests stay credential-free.** Context lookups are seeded in `AZ_CONTEXT` in `tests/test_template.py`.
+   Test names are sentences saying what would break; docstrings say what broke before.
+5. **Assert values, not presence.** Synth cannot catch a wrong IAM action, header name, alarm threshold
+   or an apostrophe in a security-group description. All of those reached a live deploy once.
+6. **Keep headings and anchors.** `config.yaml` comments and the README link to sections in `docs/` by
+   title.
+7. **Never delete a measurement or a documented failure to shorten a file.** Shorten the prose around it.
 
 ## Writing
 
-Engineer to engineer. Short sentences. State the fact and the action. No em-dashes. No "deliberately",
-"worth knowing", "genuinely", "verified", "world-class", "battle-tested". A statement in these docs is a
-statement; when something is estimated or not measured, say so, do not label the rest as verified.
-Numbers go in tables. Keep every heading other files link to.
+Engineer to engineer. Short sentences. State the fact and the action; one sentence of justification per
+default at most. Numbers in tables. No em-dashes. No "deliberately", "worth knowing", "genuinely",
+"verified", "world-class", "battle-tested", "seamless", "robust", "leverage". A statement is a statement;
+when something is estimated or not measured, say so instead of labelling the rest as verified.
+
+Code comments explain why, not what, and record the failure that motivated a non-obvious choice.
+
+## Common changes
+
+- **Engine flag or startup behaviour**: edit `container/serve`, rebuild the image, deploy, confirm the
+  `[serve] vllm serve ...` line in the task log shows the change.
+- **Stack resource**: edit `serving_stack.py`, add or update a template test, synth with the shipped
+  `config.yaml` in isolation (not only your local overrides), deploy once.
+- **Instance type**: add to the catalog in `hardware.py` with vCPU and host RAM from
+  `ec2 describe-instance-types`; the tests check derived values.
+- **Dashboard or alarm**: widget titles are questions in plain language; alarm descriptions are written
+  for someone on a phone who did not deploy this. Test the threshold value.
 
 ## Operating a test deployment
 
-- Test with `instanceCount: 6`, `maxInstanceCount: 8` in `config.local.yaml`; the shipped default is 16
-  and needs a quota increase. Use spot when on-demand has no capacity.
-- Check the ASG activity a few minutes into a deploy. CloudFormation waits up to an hour on a service
-  that can never place a task; the ASG says why in seconds.
-- Park before you leave: `instanceCount: 0`, `maxInstanceCount: 0`, deploy. Instances are gone in about
-  five minutes. Destroy only after they are gone, or the destroy stalls for 25 minutes on the service.
-- A stack in `UPDATE_IN_PROGRESS` cannot be updated. `cancel-update-stack` rolls back to the previous
-  task definition.
+- Use `instanceCount: 6`, `maxInstanceCount: 8`, `useSpot: true` in `config.local.yaml`. The shipped
+  default is 16 and needs a quota increase; on-demand g7e often has no capacity.
+- A few minutes into a deploy, read the ASG scaling activities. CloudFormation waits up to an hour on a
+  service that can never place a task; the ASG says why in seconds.
+- `UPDATE_IN_PROGRESS` blocks further deploys. `aws cloudformation cancel-update-stack` rolls back to
+  the previous task definition.
+- Park before you stop: `instanceCount: 0`, `maxInstanceCount: 0`, deploy. Instances are gone in about
+  five minutes. Destroy only after they are gone, or the ECS service stalls for 25 minutes.
+- GPU instances are the entire cost. Never leave them running after a test.
 
-## Before you finish
+## Commits
 
-- `python3 -m pytest tests/ -q` passes.
-- If the stack changed: synthesised with the shipped `config.yaml` in isolation, not only with your local
-  overrides, and deployed once.
-- If `container/` changed: image rebuilt and the entrypoint line in a task log shows the change.
-- If docs changed: no em-dash character anywhere in the repo, every number that was there is still there,
-  the fleet is parked.
+Imperative subject under 70 characters. The body says why, names the failure or measurement behind the
+change, and states what was deployed or tested. One logical change per commit.
+
+## Done means
+
+- Tests pass.
+- Stack changes were synthesised from the shipped config and deployed once.
+- `container/` changes were rebuilt into the image and seen in a task log.
+- Docs changes: no em-dash character in the repo, every number that was there is still there.
+- The fleet is parked.

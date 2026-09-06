@@ -375,9 +375,18 @@ python3 scripts/test_endpoint.py "<Endpoint output>" --key "<ApiKeyValue output>
 Checks health, both API shapes, streaming, and 64 concurrent requests. If anything fails, see
 [docs/troubleshooting.md](docs/troubleshooting.md).
 
-This is a smoke test, **not a benchmark**. Before sizing from your own measurement, read *Choosing an
-operating concurrency* in [docs/tuning.md](docs/tuning.md): whether prompts share a prefix changes the
-answer by about 2.4×, and a figure taken at low concurrency understates peak throughput by about 2×.
+That is a smoke test. To find what the fleet holds up to, sweep concurrency:
+
+```bash
+python3 scripts/benchmark.py "<Endpoint output>" --key "<ApiKeyValue output>" \
+  --concurrency 64,128,256,512 --input-tokens 1000 --output-tokens 190 --seconds 90
+```
+
+One row per level: requests/sec, tokens/sec, p50/p95/p99, and the decode speed one request saw. Size on
+the aggregate columns at the highest level whose p95 is inside your budget. Use your own prompt shape;
+whether prompts share a prefix changes the answer by about 2×, and set `maxInstanceCount` equal to
+`instanceCount` first so autoscaling does not move under the measurement. How to read the results:
+*Choosing an operating concurrency* in [docs/tuning.md](docs/tuning.md).
 
 ---
 
@@ -482,7 +491,7 @@ python3 scripts/endpoint_info.py     # Dashboard  https://<region>.console.aws.a
 ```
 
 Widgets are titled as questions (*Is it slow?*, *Are the engines up?*, *Did AWS give us the
-instances?*) and the top panel states what normal looks like for your configuration. Alarms:
+instances?*). Alarms:
 `<stack>-engines-unhealthy` and `<stack>-load-balancer-erroring`; set `alarmTopicArn` in config.yaml to
 notify an SNS topic. Set `latencyAlarmSeconds` for a third, `<stack>-too-slow`, on p95; it has no
 default because "too slow" depends on the caller.
@@ -664,6 +673,7 @@ scripts/
   build_image.py          build and push to ECR, via CodeBuild
   endpoint_info.py        print the endpoint, key and a ready-to-paste request
   test_endpoint.py        smoke-test a deployed endpoint
+  benchmark.py            concurrency sweep: req/s, tok/s, p50/p95/p99 per level
 LICENSE                   MIT-0
 docs/
   tuning.md               choosing an instance type and tuning the engine
@@ -707,6 +717,6 @@ would otherwise take a 20-minute deployment to surface.
   token whose account has not accepted the licence, a 403.
 - **g7e only.** The instance catalog in `infra/hardware.py` knows the six g7e sizes and rejects anything
   else at synth. Another GPU family means adding its entries there; nothing else assumes g7e.
-- **Benchmarking:** `scripts/test_endpoint.py --concurrency N` is a smoke check, not a benchmark. For
-  real numbers use `vllm bench serve` against the endpoint, and set `maxInstanceCount` equal to
-  `instanceCount` so autoscaling does not move under the measurement.
+- **Benchmarking:** `scripts/test_endpoint.py` is a smoke check; `scripts/benchmark.py` is the
+  benchmark. Set `maxInstanceCount` equal to `instanceCount` first so autoscaling does not move under
+  the measurement.

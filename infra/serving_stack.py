@@ -766,45 +766,6 @@ service:
         # the console URL can be printed as a plain string rather than a Ref nobody can click.
         dashboard_name = f"{self.stack_name}-serving"
         dashboard = cloudwatch.Dashboard(self, "Dashboard", dashboard_name=dashboard_name)
-        # The most valuable thing on the dashboard, because every graph below is unreadable without
-        # knowing what normal looks like for THIS fleet. The numbers come from the configuration, so it
-        # cannot drift away from what was actually deployed.
-        dashboard.add_widgets(cloudwatch.TextWidget(width=24, height=6, markdown=(
-            f"## {self.stack_name} - what normal looks like\n"
-            + (f"This fleet runs **{instance_count} instance(s)** as a floor, each with "
-               f"**{tuning['replicas']} engine(s)**, so **{tasks} task(s)** should be healthy and "
-               f"serving"
-               + (f", and requests should come back in under **{latency_alarm:g} seconds at p95**"
-                  if latency_alarm else "")
-               + (f", and a task steadily handling more than **{requests_per_target} requests a "
-                  f"minute** will add capacity automatically (about 11 minutes before it helps)."
-                  if requests_per_target else
-                  ". The fleet is a fixed size - it will not grow on its own if it is overloaded.")
-               # Zero instances is a supported state, not a misconfiguration - it is how you stop paying
-               # for GPUs without tearing the stack down. Saying so is the difference between a reader
-               # concluding "parked, as intended" and "everything is broken", because every graph below
-               # is legitimately empty and the endpoint legitimately returns 503.
-               if tasks else
-               "**This fleet is parked.** `instanceCount` is 0, so no engines are running, every graph "
-               "below is empty for that reason, and the endpoint returns 503. That is the deliberate "
-               "way to stop paying for GPUs - raise `instanceCount` and redeploy to bring it back.")
-            + "\n\n"
-            "**If it is slow:** look at *Is it slow?* first. p99 climbing while p50 stays flat means "
-            "requests are queueing behind a full engine, not that the model got slower - the fix is "
-            "more capacity, and if the fleet is already at its ceiling it will stay slow until load "
-            "drops. **If it is erroring:** *Is the load balancer failing?* and *Are the engines "
-            "erroring?* are different problems - the first is usually a moment with no healthy task, the "
-            "second is the model itself returning an error. A non-streamed answer that takes longer "
-            f"than {CLOUDFRONT_READ_TIMEOUT_S} seconds is cut off by CloudFront with a 504 and shows "
-            "only on *Is CloudFront timing out?*. **If capacity looks wrong:** healthy tasks falling while instances "
-            "stay in service means engines are crashing; instances stuck below desired means AWS has "
-            "no capacity to give.\n\n"
-            "**The bottom row comes from inside the engines.** Requests *waiting* is work the engine has "
-            "accepted but not started - it never refuses work, so a growing queue is what saturation "
-            "looks like, and it shows before latency does. *KV cache* near 100% means the next step is "
-            "preemption, and any *preemptions* at all mean the engine is redoing work it already did. "
-            "Not here: GPU utilisation - on this workload it reads high while saying little."
-        )))
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
                 title=("Is it slow? - response time"

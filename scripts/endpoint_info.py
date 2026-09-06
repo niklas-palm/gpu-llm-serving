@@ -95,6 +95,10 @@ print(client.responses.create(model="{model}", input="Say hello in five words.")
 --- Smoke test the whole endpoint ---
 
 python3 scripts/test_endpoint.py "{endpoint}" --key "{key}"
+
+--- Find what the fleet holds up to (sweep concurrency; ~2 min per level) ---
+
+python3 scripts/benchmark.py "{endpoint}" --key "{key}" --concurrency 64,128,256
 """.rstrip())
     return 0
 

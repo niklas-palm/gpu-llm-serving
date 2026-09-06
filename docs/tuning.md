@@ -757,8 +757,9 @@ see *Choosing an operating concurrency*.
 - **Watch p99, not just p95.** At 1024 concurrent, p95 was 7.60 s while p99 was 13.10 s.
 - **Use your own prompt shapes and prefix-sharing.** It moves the answer by 2×.
 
-`scripts/test_endpoint.py --concurrency 64` is a smoke test, not a benchmark: it shows the endpoint
-holds up, not where its ceiling is.
+`scripts/test_endpoint.py` is a smoke test: it shows the endpoint holds up, not where its ceiling is.
+`scripts/benchmark.py` does the sweep above: multi-process, warm-up first, aggregate and per-request
+numbers from the same run, unique prompts unless you pass `--shared-prefix`.
 
 ---
 
@@ -971,9 +972,6 @@ slow means). Nothing to switch on: the URL is a stack output (`DashboardUrl`) an
 
 The top rows use metrics the load balancer and the Auto Scaling group already publish. The bottom row
 comes from inside the engines through a sidecar (*Engine metrics* below).
-
-The top panel states what normal looks like for your configuration: expected task count, scaling
-threshold, latency target if set. On a fleet parked at `instanceCount: 0` it says so.
 
 Widgets are titled as questions:
 
