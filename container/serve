@@ -61,12 +61,12 @@ if [[ -n "${EXTRA_ARGS//[[:space:]]/}" ]]; then
   # kept; a value shlex cannot parse stops the start, because silently starting without the flags is
   # how a fix appears not to work. Through a file, not a variable: bash variables cannot hold NUL.
   EXTRA_FILE=$(mktemp)
-  trap 'rm -f "${EXTRA_FILE}"' EXIT
   if ! python3 -c 'import shlex, sys; sys.stdout.write("".join(a + "\0" for a in shlex.split(sys.argv[1])))' "${EXTRA_ARGS}" > "${EXTRA_FILE}"; then
     echo "[serve] extraArgs is not shell-parseable: ${EXTRA_ARGS}" >&2
     exit 1
   fi
   mapfile -d '' -t EXTRA < "${EXTRA_FILE}"
+  rm -f "${EXTRA_FILE}"
   ARGS+=("${EXTRA[@]}")
 fi
 
