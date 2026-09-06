@@ -43,10 +43,10 @@ REQUIRED = ("region", "instanceType", "modelId")
 # variable is indistinguishable from an unset one often enough that "empty means default" is the safer
 # reading.
 ENV_OVERRIDES = {
-    "SERVING_IMAGE": ("image",),
+    "SERVING_IMAGE": "image",
     # For CI, where config.local.yaml does not exist: without this every run would generate a fresh
     # key and rotate it for every client.
-    "API_KEY": ("apiKey",),
+    "API_KEY": "apiKey",
 }
 
 
@@ -62,15 +62,9 @@ def _merge(base: dict, overlay: dict) -> dict:
 
 
 def _apply_env(cfg: dict) -> dict:
-    for env_name, path in ENV_OVERRIDES.items():
-        raw = os.environ.get(env_name)
-        if raw is None or raw == "":
-            continue
-        value: object = raw
-        target = cfg
-        for key in path[:-1]:
-            target = target.setdefault(key, {})
-        target[path[-1]] = value
+    for env_name, key in ENV_OVERRIDES.items():
+        if os.environ.get(env_name):
+            cfg[key] = os.environ[env_name]
     return cfg
 
 
@@ -158,8 +152,7 @@ def load_config() -> dict:
     # vLLM's own command-line arguments and is passed none, so the task would start and serve nothing.
     # Failing here costs a second; failing that way costs a 20-minute deploy and looks like a broken
     # model.
-    cfg["image"] = cfg.get("image") or os.environ.get("SERVING_IMAGE") or ""
-    if not cfg["image"]:
+    if not cfg.get("image"):
         raise ConfigError(
             "no serving image configured.\n"
             "  Build and push it first; --write-config saves the URI to config.local.yaml:\n"
