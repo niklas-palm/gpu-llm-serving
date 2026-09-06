@@ -190,8 +190,9 @@ class ServingStack(Stack):
             # vanish mid-request. Without this the ECS agent does not deregister the target, so the
             # load balancer keeps sending traffic to a dead task until the health check fails it -
             # interval x threshold, up to ~150 s of 502s. Draining deregisters immediately and lets
-            # in-flight requests finish. Set here rather than via asg.add_user_data() because with an
-            # externally supplied launch template the ASG does not own the user data.
+            # in-flight requests finish. Set here rather than through the capacity provider's
+            # `spot_instance_draining`, which the construct only writes when the ASG has a `spotPrice`;
+            # a mixed-instances policy does not set one, so that option is a silent no-op here.
             gpu_user_data.add_commands(
                 "echo ECS_ENABLE_SPOT_INSTANCE_DRAINING=true >> /etc/ecs/ecs.config")
 
@@ -341,9 +342,8 @@ class ServingStack(Stack):
             enable_managed_termination_protection=False,
         )
         # Spot draining is enabled through the launch template's user data rather than the construct's
-        # `spot_instance_draining`: that property works by writing to the ASG's user data, which it
-        # cannot do when the launch template is supplied externally (verified - it produces no
-        # ManagedDraining in the template here). See `gpu_user_data` above for the real mechanism.
+        # `spot_instance_draining`: the construct applies that only when the ASG has a `spotPrice`, and a
+        # mixed-instances policy sets none, so it does nothing here. See `gpu_user_data` above.
         cluster.add_asg_capacity_provider(capacity_provider)
 
         # ------------------------------------------------------------------ API key
