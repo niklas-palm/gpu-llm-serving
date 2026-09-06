@@ -109,6 +109,16 @@ alarmTopicArn: ""
 # ---------------------------------------------------------------------------- model
 
 # Any Hugging Face repo id vLLM supports. Also the model name clients send and /v1/models returns.
+#
+# The weights you pick are a speed and cost decision, not a given. For this model, measured on this GPU
+# with unique 1,000-token prompts (docs/tuning.md has every number):
+#
+#   Qwen/Qwen3-30B-A3B-Instruct-2507      bf16, 57 GiB, + quantization: "fp8" below     shipped default
+#   Qwen/Qwen3-30B-A3B-Instruct-2507-FP8  publisher's fp8, 29 GiB, quantization: ""      same speed, half the download
+#   nvidia/Qwen3-30B-A3B-NVFP4            calibrated 4-bit, 17 GiB, quantization: ""     +25-28% tok/s, quality unmeasured
+#   + EAGLE-3 speculator via extraArgs (see below)                                        +24-41% tok/s on any of them
+#
+# bf16 without quantization is half the throughput of fp8 and is the choice only on quality grounds.
 modelId: Qwen/Qwen3-30B-A3B-Instruct-2507
 
 # Optional. For gated repos (Llama, Gemma): the name of a Secrets Manager secret holding your Hugging

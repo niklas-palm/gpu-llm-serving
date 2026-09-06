@@ -97,7 +97,10 @@ order and check each step before the next.
    `L-DB2E81BA`, spot `L-3819A6DF`, in vCPU, 8 per instance. `cdk bootstrap` once per account and
    region. CloudFront VPC origins must be supported in the region (they are in all commercial regions
    that offer g7e as of this writing).
-2. **Configure.** `region`, `instanceType`, `modelId` in `config.yaml`. The default fleet is 16 and
+2. **Configure.** `region`, `instanceType`, `modelId` in `config.yaml`. Say out loud that the weights are
+   a choice: the shipped fp8 is the safe default, the publisher's FP8 build halves the download, the NVFP4
+   build is +28% throughput with unmeasured quality, and an EAGLE-3 speculator adds +24% to +41% on any of
+   them. The table in the README's Configure section has the ids and numbers. The default fleet is 16 and
    needs 128 vCPU of quota; with less, set `instanceCount` and `maxInstanceCount` in `config.local.yaml`.
    For a first deployment suggest `useSpot: true`: on-demand g7e has had no capacity in several regions
    at once, and spot in the same regions launched within a minute.
