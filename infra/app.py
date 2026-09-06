@@ -92,7 +92,9 @@ def _persist_generated_api_key() -> str:
         # A blank `apiKey:` line already in the file is replaced, not appended to. Appending produced
         # two keys, and the file only worked because PyYAML takes the last.
         def _blank_key_line(line: str) -> bool:
-            code = line.split("#", 1)[0].strip()
+            # Column 0 only: an indented `apiKey:` belongs to some nested block, and rewriting it at
+            # column 0 broke that block.
+            code = line.split("#", 1)[0].rstrip()
             return code.startswith("apiKey:") and _blank(yaml.safe_load(code.split(":", 1)[1]))
 
         if exists and any(_blank_key_line(line) for line in body.splitlines()):
@@ -132,19 +134,34 @@ def _blank(value: object) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
 
+def _load_yaml(path: str) -> dict:
+    """A config file that does not parse, or is not a mapping, is a one-line ConfigError like every
+    other config mistake, not a PyYAML traceback."""
+    try:
+        with open(path) as fh:
+            doc = yaml.safe_load(fh)
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{os.path.basename(path)} is not valid YAML:\n  {e}") from None
+    if doc is None:
+        return {}
+    if not isinstance(doc, dict):
+        raise ConfigError(f"{os.path.basename(path)} must be a mapping of keys to values.")
+    return doc
+
+
 def load_config() -> dict:
-    with open(CONFIG_PATH) as fh:
-        cfg = yaml.safe_load(fh) or {}
+    cfg = _load_yaml(CONFIG_PATH)
 
     if os.path.exists(LOCAL_CONFIG_PATH):
-        with open(LOCAL_CONFIG_PATH) as fh:
-            cfg = _merge(cfg, yaml.safe_load(fh) or {})
+        cfg = _merge(cfg, _load_yaml(LOCAL_CONFIG_PATH))
         print(f"merged local overrides from {os.path.basename(LOCAL_CONFIG_PATH)}",
               file=sys.stderr)
 
     cfg = _apply_env(cfg)
 
-    missing = [k for k in REQUIRED if not str(cfg.get(k) or "").strip()]
+    # Strings only: `instanceType: [g7e.2xlarge]` passed a truthiness check and died as an unhashable
+    # list in the instance catalog.
+    missing = [k for k in REQUIRED if not (isinstance(cfg.get(k), str) and cfg[k].strip())]
     if missing:
         raise ConfigError(
             "config.yaml is missing required values: " + ", ".join(missing)

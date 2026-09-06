@@ -106,3 +106,30 @@ def test_a_non_string_apikey_is_not_treated_as_blank(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
     assert app.load_config()["apiKey"] == 0
     assert not (tmp_path / "config.local.yaml").exists()
+
+
+def _load_from(tmp_path, monkeypatch, body: str) -> dict:
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(body)
+    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
+    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
+    return app.load_config()
+
+
+@pytest.mark.parametrize("body, match", [
+    ("region: us-east-2\ninstanceType: [g7e.2xlarge]\nmodelId: org/m\n", "instanceType"),
+    ("apiKey:\tx\n", "not valid YAML"),
+    ("- a\n- b\n", "must be a mapping"),
+])
+def test_a_broken_config_file_is_a_config_error_not_a_traceback(tmp_path, monkeypatch, body, match):
+    """A list where a string belongs died as an unhashable type in the instance catalog; a tab after a
+    colon was a PyYAML ScannerError traceback; a list document was an AttributeError."""
+    with pytest.raises(app.ConfigError, match=match):
+        _load_from(tmp_path, monkeypatch, body)
+
+
+def test_an_indented_apikey_line_is_not_the_top_level_key(tmp_path, monkeypatch):
+    """The replacer matched `apiKey:` at any indentation and rewrote it at column 0, breaking the
+    block it belonged to."""
+    body, key = _persist(tmp_path, monkeypatch, "region: us-east-2\ntuning:\n  apiKey:\n  maxNumSeqs: 128\n")
+    assert "  apiKey:\n  maxNumSeqs: 128\n" in body and body.endswith(f"apiKey: {key}\n")
