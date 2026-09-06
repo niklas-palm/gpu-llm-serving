@@ -377,6 +377,14 @@ class ServingStack(Stack):
                 "  pass apiKey in the config - it cannot be generated here, because synth runs on\n"
                 "  every deploy and a fresh value would rotate the key each time."
             )
+        # The value lands in an ALB header condition, which has rules of its own: 128 characters at most
+        # (minus "Bearer "), `*` and `?` are wildcards, and matching is case-insensitive. A key with a
+        # `*` would become a prefix match; a long one fails at deploy time after the VPC exists.
+        if not re.fullmatch(r"[A-Za-z0-9._~+/=-]{16,121}", key_value):
+            raise ConfigError(
+                "apiKey must be 16 to 121 characters from A-Z a-z 0-9 . _ ~ + / = -\n"
+                "  No * or ? (the load balancer treats them as wildcards) and no spaces. The generated\n"
+                "  key satisfies this; if you set your own, keep to that alphabet.")
 
         # A convenience copy, so callers have somewhere conventional to read it from - NOT a
         # confidentiality boundary, for the reason above. `unsafe_plain_text` is the honest API here:

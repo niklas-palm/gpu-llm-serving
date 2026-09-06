@@ -1187,3 +1187,12 @@ def test_tasks_cannot_reach_the_instance_metadata_service():
     container, and the setting has to be explicit rather than a side effect of the IMDSv2 hop limit."""
     lt = only(synth(), "AWS::EC2::LaunchTemplate")["LaunchTemplateData"]
     assert "ECS_AWSVPC_BLOCK_IMDS=true" in str(lt["UserData"])
+
+
+@pytest.mark.parametrize("bad", ["short", "has*wildcard-in-it-1234", "has?query-mark-1234567",
+                                 "x" * 122, "has space in it 12345"])
+def test_an_api_key_the_load_balancer_would_mismatch_is_rejected_at_synth(bad):
+    """ALB header conditions treat * and ? as wildcards, cap values at 128 characters and match
+    case-insensitively. A key containing * became a prefix match; a long one failed at deploy."""
+    with pytest.raises(ConfigError, match="apiKey"):
+        synth(apiKey=bad)
