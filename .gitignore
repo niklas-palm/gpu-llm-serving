@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# CDK build output. Anywhere - the directory follows wherever you invoke the CLI from.
+cdk.out*/
+
+# CDK caches resolved account-specific values here (availability zones, AMI ids). It is a local
+# cache, not configuration, and committing it would leak the account id it was synthesised against.
+# Matched at any depth for the same reason as cdk.out.
+cdk.context.json
+
+# Local, uncommitted config overrides, deep-merged over config.yaml. This is where a real
+# hosted zone name or account-specific value belongs, so the tracked config can ship a
+# placeholder and nobody's domain is committed by editing the file they were told to edit.
+config.local.yaml

@@ -1,0 +1,185 @@
+# =============================================================================================
+# The only file you need to edit.
+#
+# Minimum: region, instanceType, modelId. Everything else has a default. GPU count, host RAM,
+# container memory, tensor-parallel degree and engines per instance are derived from instanceType.
+#
+# Comments say what a setting does and the one trap to know about. Measurements and reasoning are in
+# docs/tuning.md; each setting names its section.
+#
+# Values you do not want to commit (API key, account-specific image URI) go in config.local.yaml,
+# gitignored and deep-merged over this file. SERVING_IMAGE in the environment overrides both, for a
+# pipeline that builds and deploys in one run. An empty variable counts as unset. `region` is not
+# settable from the environment; see infra/app.py.
+#
+# The endpoint needs no configuration: a CloudFront HTTPS URL in front of an internal load balancer.
+# One limit: a non-streamed answer must finish within 120 s. Streamed answers have no limit.
+# README.md, "Access".
+# =============================================================================================
+
+# ---------------------------------------------------------------------------- deployment
+
+# g7e is not offered in every region. Check first:
+#   aws ec2 describe-instance-type-offerings --region <region> \
+#     --location-type availability-zone --filters Name=instance-type,Values=g7e.2xlarge
+region: us-west-2
+
+# Optional. Confine the VPC, and so the GPU instances, to these zones.
+# Empty spans up to four zones. Set it when a zone lacks the type (us-east-2: three zones, g7e in two)
+# to avoid failed launch attempts there. At least two; the load balancer needs two subnets.
+#   availabilityZones: ["us-east-2a", "us-east-2b"]
+availabilityZones: []
+
+# ---------------------------------------------------------------------------- fleet
+
+# g7e.2xlarge | 4xlarge | 8xlarge | 12xlarge | 24xlarge | 48xlarge. Same 96 GiB GPU in every size;
+# larger sizes add GPUs, vCPU and host RAM. Anything else is rejected at synth.
+# For a model that fits one GPU, the smallest size is the best value.
+# docs/tuning.md, "For a model that fits one GPU, buy the smallest instance".
+instanceType: g7e.2xlarge
+
+# Instance count, and the minimum when autoscaling is on. 0 parks the deployment (see maxInstanceCount).
+#
+# 16 = the GPU count of two g7e.48xlarge for about 20% less money. It covers this example workload:
+#   ~1,000 input tokens at ~70 req/s, 8 s budget       ->  70,000 input tok/s
+#   ~2,600 input tokens at ~65 req/s, 20-25 s budget   -> 170,000 input tok/s
+# One GPU sustains ~15,500 input tok/s inside an 8 s p95. 16 GPUs = ~248,000 against 240,000 needed,
+# 3% spare, so maxInstanceCount leaves room above it.
+#
+# Two fleets would cost 14, not 16. One endpoint has one latency budget, so the whole fleet meets the
+# strictest one. At a 20-25 s budget a GPU sustains ~27,600 input tok/s, so split by budget it is
+# 6 + 8 = 14. Deploy this stack twice if the shapes are separable.
+# docs/tuning.md, "Sizing a fleet, and when to autoscale".
+#
+# Quota: 16 instances is 128 vCPU. The default `All G and VT Spot` quota (L-3819A6DF) is 64 and the
+# on-demand G quota is often lower, so request an increase before this will launch. For a first look,
+# set 1-2.
+#
+# Size for steady-state demand with headroom. Autoscaling is too slow to lean on.
+instanceCount: 16
+
+# Autoscaling ceiling. Equal to instanceCount, or omitted, means a fixed fleet and no scaling policy.
+# To park: set this AND instanceCount to 0. Zeroing one of them is rejected at synth.
+# Autoscaling is burst insurance, not a saving: ~11 minutes to usable capacity, scale-in one step at a
+# time, and the instance outlives its task by ~15 minutes.
+# docs/tuning.md, "What autoscaling actually does, measured".
+maxInstanceCount: 24
+
+# Requests/minute per task at which to add capacity. Scales on the load balancer's
+# RequestCountPerTarget, a leading indicator.
+#
+# Expect to change this. Request rate scales inversely with prompt length while tokens/s per GPU stays
+# roughly constant (17.1 req/s per GPU at 1,000 tokens, 4.2 at 4,000). Derivation:
+#   one GPU sustains ~15,500 input tok/s inside an 8 s p95
+#   / your average input tokens per request  -> req/s per task
+#   x 60 x 0.85                              -> threshold
+# 1,000-token prompts: 925. The mixed workload above averages ~1,780 tokens: 15,500 / 1,780 = 8.7,
+# x 60 x 0.85 = 445. Split the fleet by shape and the thresholds are ~925 and ~330.
+#
+# Blind spot: request count ignores request cost. A hundred short and a hundred long requests look
+# the same here.
+# docs/tuning.md, "scalingRequestsPerTarget: derive it, do not inherit it".
+scalingRequestsPerTarget: 445
+
+# Spot: cheaper, and often the only way to get this GPU class. A spot g7e.2xlarge launched in 22 s
+# after 300+ on-demand failures for larger sizes. Off by default because interruption is real.
+# Two traps: spot has a separate vCPU quota (L-3819A6DF, default 64), and suspending ASG processes to
+# protect an instance also stops the ASG replacing it when spot reclaims it.
+# README.md, "Spot and instance protection".
+useSpot: false
+
+# ---------------------------------------------------------------------------- observability
+
+# Every deployment gets a CloudWatch dashboard and two alarms (engines unhealthy, load balancer
+# erroring), plus a latency alarm if latencyAlarmSeconds is set. Top rows: load balancer and ASG
+# metrics. Bottom row: engine metrics from a sidecar in every task (queue depth, batch occupancy,
+# KV cache usage, preemptions). Four custom metrics, about $1.20 a month.
+# scripts/endpoint_info.py prints the dashboard URL.
+# docs/tuning.md, "Watching a running fleet" and "Engine metrics".
+
+# Optional. Alarm when p95 response time stays above this for 3 minutes, and draw it on the latency
+# graph. 0 = off. No default: set it to what "too slow" means for your callers.
+latencyAlarmSeconds: 0
+
+# SNS topic ARN to notify when an alarm fires. Empty: alarms still change state in the console, nobody
+# is paged. No topic is created for you.
+alarmTopicArn: ""
+
+# ---------------------------------------------------------------------------- model
+
+# Any Hugging Face repo id vLLM supports. Also the model name clients send and /v1/models returns.
+modelId: Qwen/Qwen3-30B-A3B-Instruct-2507
+
+# Optional. For gated repos (Llama, Gemma): the name of a Secrets Manager secret holding your Hugging
+# Face token. Create it once, then set the name here or in config.local.yaml:
+#   aws secretsmanager create-secret --region <region> --name gpu-llm-serving/hf-token --secret-string "$HF_TOKEN"
+#   hfTokenSecretName: gpu-llm-serving/hf-token
+# The token reaches the engine as HF_TOKEN and never enters the template, outputs or logs. Empty: public
+# models only. The account behind the token must have accepted the model's licence (403 otherwise).
+hfTokenSecretName: ""
+
+# Set this if your model is not roughly 30B parameters. The tensor-parallel degree is derived from it.
+# A 70B model left at 30 derives tensorParallel: 1, deploys, and runs out of VRAM loading weights.
+# `cdk synth` prints the assumed size and the degree it chose. Count parameters, not file size.
+estimatedParamsBillions: 30
+
+
+# "fp8" quantizes at load time. Empty keeps the model's native precision.
+# Largest single effect available: bf16 measured 7,903 input tok/s per GPU against 15,941 for fp8,
+# about 2x the fleet for the same work. Prefer a publisher's official FP8 build as modelId when one
+# exists. If you clear this, set kvCacheDtype: auto below.
+# docs/tuning.md, "Quantisation is two independent decisions".
+quantization: "fp8"
+
+# Optional. Flags appended verbatim to `vllm serve`, for anything this project does not model:
+#   extraArgs: "--data-parallel-size 2"
+# Unvalidated. The container logs the full command it runs. Do not leave `--enforce-eager` here
+# beyond diagnosing a startup problem: -85% decode.
+extraArgs: ""
+
+# ---------------------------------------------------------------------------- tuning
+#
+# Leave these unless you have a reason; docs/tuning.md has the numbers behind each one.
+tuning:
+  # 0 = derive the smallest degree whose combined VRAM holds the model.
+  # Tensor parallelism makes a model fit across GPUs. It does not make a fitting model faster.
+  tensorParallel: 0
+
+  # Max tokens per request, input + output. 0 = the model's own maximum.
+  # Lowering it frees nothing (KV cache is allocated in blocks on demand). Use it only to reject
+  # over-long requests.
+  maxModelLen: 0
+
+  # Ceiling on concurrent sequences, not a reservation. Keep it above the concurrency you load-test
+  # at, or the flag is what you measure.
+  maxNumSeqs: 256
+
+  # Token budget per scheduler step. 0 = engine default. No measured effect from 8k to 64k.
+  maxNumBatchedTokens: 0
+
+  # Fraction of each GPU vLLM may claim. 0.95 measured +27% over the 0.90 default (the KV cache is
+  # what remains after the weights). 0.97 gained ~0% and crashed a dense model under load.
+  # Leave at 0.95 with unquantised weights too; the fix for that case is kvCacheDtype: auto.
+  # docs/tuning.md, "gpuMemoryUtilization: 0.95".
+  gpuMemoryUtilization: 0.95
+
+  # KV cache precision, independent of weight precision. "fp8" measured +12% decode, growing with
+  # concurrency. "auto" keeps the model's precision.
+  # With unquantised weights use "auto": fp8 packs more tokens in, batches grow, and it runs out of
+  # VRAM under load. `cdk synth` warns on the combination.
+  kvCacheDtype: fp8
+
+  # Reuse attention state across requests sharing a prompt prefix. Leave on: -1.2% when nothing
+  # shares a prefix. Throughput figures in the docs assume hits; unique prompts get about half.
+  # docs/tuning.md, "Choosing an operating concurrency".
+  enablePrefixCaching: true
+
+  # Mixture-of-experts only: pin whole experts to GPUs instead of sharding each across them.
+  # Measured -13% in FP8 and +15% in bf16 on the same two GPUs. Measure it: one flag, one restart.
+  enableExpertParallel: false
+
+  # Independent engines per instance, load-balanced by the ALB.
+  # 0 = GPUs / tensorParallel, one engine per GPU. Measured best topology: splitting one model across
+  # GPUs puts them in lockstep with an all-reduce per layer. Host memory is divided by this number.
+  # docs/tuning.md, "Topology: replicas or tensor parallelism?".
+  replicas: 0
