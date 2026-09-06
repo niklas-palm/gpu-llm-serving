@@ -61,11 +61,13 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int,
                               timeout=300)
                 dt = time.perf_counter() - t0
                 if r.status_code == 200:
+                    # Parsed before the lock, so a malformed body raises before "ok" is counted.
                     u = r.json().get("usage") or {}
+                    used_in, used_out = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
                     with lock:
                         stats["ok"] += 1
-                        stats["in"] += int(u.get("input_tokens") or 0)
-                        stats["out"] += int(u.get("output_tokens") or 0)
+                        stats["in"] += used_in
+                        stats["out"] += used_out
                         stats["lat"].append(dt)
                 else:
                     with lock:

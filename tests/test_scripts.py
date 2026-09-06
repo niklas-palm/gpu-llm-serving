@@ -46,3 +46,25 @@ def test_codebuild_may_assume_the_role_only_from_this_account_and_project_in_any
     assert cond["StringEquals"] == {"aws:SourceAccount": "111122223333"}
     assert cond["ArnLike"] == {"aws:SourceArn": "arn:aws:codebuild:*:111122223333:project/gpu-llm-serving-build"}, \
         "any region: one account-wide role serves every region this account builds in"
+
+
+def test_a_malformed_usage_body_is_one_failed_request_not_an_ok_and_a_failure(monkeypatch):
+    """`ok` was incremented before the usage fields were read, so a body with a bad usage shape raised
+    inside the lock and counted as both ok and failed, with no latency recorded: inflated rps, p50 0.0."""
+    import multiprocessing as mp
+    bench = _load("benchmark")
+
+    class Resp:
+        status_code = 200
+        def __init__(self, body): self._b = body
+        def json(self): return self._b
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, *a, **k): return Resp({"usage": {"input_tokens": [1], "output_tokens": 7}})
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    q = mp.Queue()
+    bench.worker("http://u", "k", "m", conc=2, in_tok=10, out_tok=5, seconds=0.05, shared=True, q=q)
+    r = q.get(timeout=5)
+    assert r["ok"] == 0 and r["lat"] == [] and r["fail"] > 0
