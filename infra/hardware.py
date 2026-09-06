@@ -19,17 +19,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
-from urllib.parse import urlparse
-
 # GPU memory bandwidth, GB/s. Decode streams the model's activated weights out of VRAM once per
 # generated token, so this sets the ceiling on tokens/sec for a single request.
 # 1,597, not 1,792: g7e carries the RTX PRO 6000 Blackwell SERVER Edition, whose GDDR7 runs at 25 Gbps
 # (nvidia-smi reports a 12,481 MHz memory clock, two bits per clock per pin) on a 512-bit bus. The 1,792
 # figure is the workstation card at 28 Gbps. The difference is 11% on every ceiling derived here.
 GPU_MEMORY_BANDWIDTH_GBS = 1597
-# Every g7e size carries the same GPU - an NVIDIA RTX PRO 6000 Blackwell. Larger sizes add GPUs, vCPU
-# and host RAM, never a faster card, so instance choice is a question of how many GPUs you
-# need rather than which is quicker.
 GPU_VRAM_GIB = 96
 
 # Per-GPU VRAM that must stay free for something other than weights, when deciding how many GPUs a
@@ -239,10 +234,8 @@ def derive_tensor_parallel(inst: Instance, weight_bytes: int,
     )
 
 
-# The measured defaults. Applied for any key the caller omits, so a partial config is valid and
-# there is exactly one place these values live. docs/tuning.md explains each choice.
-# Every value here was measured, and several are "let the engine decide" because
-# measurement showed the knob does nothing. See docs/tuning.md for the numbers behind each one.
+# Applied for any key the caller omits, so a partial config is valid and these values live in one
+# place. docs/tuning.md has the measurement behind each; 0 means the engine decides.
 DEFAULT_TUNING = {
     "tensorParallel": 0,            # 0 = derive from the model size
     "maxModelLen": 0,               # 0 = the model's own maximum; measured no effect from lowering it
@@ -551,15 +544,6 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
         "  of each one. Lowering gpuMemoryUtilization to 0.90 also stops the crash but costs more\n"
         "  than it saves - measured 37,877 tok/s against 46,808. See docs/troubleshooting.md."
     )
-
-
-def gpus_per_replica(inst: Instance, tuning: dict) -> int:
-    """GPUs each replica's task requests.
-
-    This is what decides ECS placement, and it is also the only thing preventing a task landing on
-    an instance that cannot serve it: a task asking for 4 GPUs can only be placed on a host with 4.
-    """
-    return int(tuning["tensorParallel"])
 
 
 def decode_ceiling_tokens_per_sec(weight_bytes: int, tp: int,

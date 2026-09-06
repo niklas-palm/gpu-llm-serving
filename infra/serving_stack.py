@@ -44,7 +44,7 @@ from constructs import Construct
 
 from hardware import (ROOT_VOLUME_GIB, ROOT_VOLUME_IOPS, ROOT_VOLUME_THROUGHPUT_MBPS,
                       ConfigError, _flag, _given, _list, _num, bytes_per_param_for, get_instance,
-                      gpus_per_replica, memory_pressure_warning, model_bytes, resolve_topology,
+                      memory_pressure_warning, model_bytes, resolve_topology,
                       validate_tuning)
 
 CONTAINER_PORT = 8080
@@ -572,7 +572,7 @@ class ServingStack(Stack):
             # Derived from HOST RAM, not GPU count - see hardware.py for why that distinction
             # matters. ECS reserves the whole amount, so this also caps replicas per instance.
             memory_limit_mib=inst.container_memory_mib // tuning["replicas"],
-            gpu_count=gpus_per_replica(inst, tuning),
+            gpu_count=tuning["tensorParallel"],
             environment=env,
             secrets=container_secrets or None,
             logging=ecs.LogDrivers.aws_logs(stream_prefix="vllm", log_group=log_group),
@@ -996,7 +996,7 @@ service:
                          f"?region={self.region}#dashboards:name={dashboard_name}"),
                   description="Open this to see whether the fleet is healthy")
         CfnOutput(self, "ResolvedTensorParallel", value=str(tuning["tensorParallel"]))
-        CfnOutput(self, "GpusPerReplica", value=str(gpus_per_replica(inst, tuning)))
+        CfnOutput(self, "GpusPerReplica", value=str(tuning["tensorParallel"]))
         CfnOutput(self, "ContainerMemoryMib", value=str(inst.container_memory_mib
                                                        // tuning["replicas"]))
         CfnOutput(self, "PurchaseModel", value="spot" if use_spot else "on-demand")
