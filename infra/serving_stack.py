@@ -639,8 +639,9 @@ service:
             # row goes blank. The alternative - a metrics bug taking down inference - is the wrong trade.
             essential=False,
             # ECS never restarts a non-essential container on its own, so without this an OOM at the
-            # memory limit would silently blank this engine's share of the metrics until the task
-            # was replaced.
+            # memory limit would silently blank this engine's share of the metrics until the task was
+            # replaced. 60 s is the smallest period ECS allows; a container that dies within its first
+            # 60 s is not restarted, which is the one gap this leaves.
             enable_restart_policy=True, restart_attempt_period=Duration.seconds(60),
             environment={"AOT_CONFIG_CONTENT": collector_config},
             logging=ecs.LogDrivers.aws_logs(stream_prefix="metrics", log_group=log_group),
