@@ -447,6 +447,7 @@ def test_the_load_balancer_is_internal_and_reached_only_through_a_vpc_origin():
     alb = only(template, "AWS::ElasticLoadBalancingV2::LoadBalancer")
     assert alb["Scheme"] == "internal"
     vpc_origin = only(template, "AWS::CloudFront::VpcOrigin")["VpcOriginEndpointConfig"]
+    assert vpc_origin["Name"] == "T-us-west-2", "VPC origin names are account-wide; the region disambiguates"
     assert vpc_origin["OriginProtocolPolicy"] == "http-only"
     assert vpc_origin["HTTPPort"] == 80
     origin = cdn(template)["Origins"][0]

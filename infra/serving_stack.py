@@ -470,6 +470,9 @@ class ServingStack(Stack):
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.VpcOrigin.with_application_load_balancer(
                     alb,
+                    # Account-wide name, like the dashboard: a second region with CDK's default name
+                    # failed with "another vpc origin with the same name already exists".
+                    vpc_origin_name=f"{self.stack_name}-{self.region}",
                     protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
                     http_port=80,
                     read_timeout=Duration.seconds(CLOUDFRONT_READ_TIMEOUT_S),
