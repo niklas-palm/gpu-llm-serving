@@ -103,9 +103,9 @@ def config_region(default: str = "") -> str:
             continue
         with open(path) as fh:
             region = ((yaml.safe_load(fh) or {}).get("region") or region)
-    # config.yaml WINS over $AWS_REGION. That variable is commonly set to something unrelated to this
-    # project, and letting it win would recreate the exact bug this function exists to prevent.
-    return region or os.environ.get("AWS_REGION", "")
+    # No $AWS_REGION fallback, the same as app.py: that variable is commonly set to something
+    # unrelated, and the build and the deploy must agree on the region.
+    return region
 
 
 def ensure_repo(ecr) -> None:
@@ -124,7 +124,7 @@ def ensure_repo(ecr) -> None:
                              lifecyclePolicyText=json.dumps(LIFECYCLE))
 
 
-def ensure_bucket(s3, bucket: str, region: str) -> None:
+def ensure_bucket(s3, bucket: str, region: str, account: str) -> None:
     """A private, dedicated bucket for the build context, created if absent.
 
     Dedicated rather than the CDK bootstrap bucket, so this script works before `cdk bootstrap` has
@@ -132,7 +132,9 @@ def ensure_bucket(s3, bucket: str, region: str) -> None:
     image.
     """
     try:
-        s3.head_bucket(Bucket=bucket)
+        # ExpectedBucketOwner: the name is predictable, so a bucket someone else created under it
+        # must fail here rather than receive our build context.
+        s3.head_bucket(Bucket=bucket, ExpectedBucketOwner=account)
         return
     except Exception as e:                                    # noqa: BLE001 - inspected below
         code = str(getattr(e, "response", {}).get("Error", {}).get("Code", ""))
@@ -157,7 +159,7 @@ def ensure_bucket(s3, bucket: str, region: str) -> None:
     print(f"  created build bucket {bucket}")
 
 
-def ensure_role(iam, account: str, bucket: str, partition: str = "aws") -> str:
+def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "aws") -> str:
     """Create the role if missing, and ALWAYS reconcile its inline policy.
 
     Reconciling on every run rather than returning early for an existing role: a corrected policy in
@@ -170,11 +172,15 @@ def ensure_role(iam, account: str, bucket: str, partition: str = "aws") -> str:
             {"Sid": "Logs", "Effect": "Allow",
              "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
              "Resource": f"arn:{partition}:logs:*:{account}:log-group:/aws/codebuild/{PROJECT_NAME}*"},
+            # GetAuthorizationToken takes no resource; everything else is scoped to this one repository,
+            # so the build role cannot overwrite any other image in the account.
+            {"Sid": "EcrLogin", "Effect": "Allow",
+             "Action": ["ecr:GetAuthorizationToken"], "Resource": "*"},
             {"Sid": "PushToEcr", "Effect": "Allow",
-             "Action": ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
-                        "ecr:CompleteLayerUpload", "ecr:InitiateLayerUpload", "ecr:PutImage",
-                        "ecr:UploadLayerPart", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-             "Resource": "*"},
+             "Action": ["ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload",
+                        "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart",
+                        "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+             "Resource": f"arn:{partition}:ecr:{region}:{account}:repository/{REPO_NAME}"},
             {"Sid": "ReadBuildContext", "Effect": "Allow",
              "Action": ["s3:GetObject", "s3:GetObjectVersion"],
              "Resource": f"arn:{partition}:s3:::{bucket}/build/*"},
@@ -201,7 +207,7 @@ def ensure_role(iam, account: str, bucket: str, partition: str = "aws") -> str:
     return arn
 
 
-def upload_context(s3, bucket: str) -> str:
+def upload_context(s3, bucket: str, account: str) -> str:
     """Zip container/ plus the generated buildspec, and put it in S3."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -218,7 +224,7 @@ def upload_context(s3, bucket: str) -> str:
             with open(path, "rb") as fh:
                 z.writestr(info, fh.read())
     key = "build/gpu-llm-serving-src.zip"
-    s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue())
+    s3.put_object(Bucket=bucket, Key=key, Body=buf.getvalue(), ExpectedBucketOwner=account)
     print(f"  uploaded build context -> s3://{bucket}/{key}")
     return key
 
@@ -319,7 +325,10 @@ def write_image_uri(uri: str) -> None:
     """Write `image: <uri>` into config.local.yaml, replacing any existing image line."""
     # config.local.yaml, never config.yaml. The URI contains the account id, and config.yaml is
     # tracked - a test fails if an account id appears in it, precisely so this cannot leak.
-    path = os.path.join(ROOT, "config.local.yaml")
+    # Next to whichever config is in use, the same rule as app.py, or a run with $CONFIG pointing
+    # elsewhere writes a file the deploy never reads.
+    config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
+    path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "config.local.yaml")
     header = ("# Local overrides, deep-merged over config.yaml. Gitignored, so this is where\n"
               "# account-specific values belong.\n")
     # A line-level edit rather than a YAML round-trip, so anything else already in this file -
@@ -338,7 +347,6 @@ def write_image_uri(uri: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", default=None, help="defaults to `region` in config.yaml")
-    ap.add_argument("--tag", default=TAG)
     ap.add_argument("--write-config", action="store_true",
                     help="write the image URI into config.local.yaml (gitignored)")
     ap.add_argument("--status", default=None, help="report on an existing build id and exit")
@@ -359,7 +367,7 @@ def main() -> int:
         if ok and a.write_config:
             ident = boto3.client("sts", region_name=region).get_caller_identity()
             dns = "amazonaws.com.cn" if ident["Arn"].split(":")[1] == "aws-cn" else "amazonaws.com"
-            write_image_uri(f"{ident['Account']}.dkr.ecr.{region}.{dns}/{REPO_NAME}:{a.tag}")
+            write_image_uri(f"{ident['Account']}.dkr.ecr.{region}.{dns}/{REPO_NAME}:{TAG}")
         # Non-zero on a failed build, so this is usable in a script rather than always succeeding.
         return 0 if ok else 1
 
@@ -372,22 +380,22 @@ def main() -> int:
     # meant this function could not emit a China URI even though the stack's image regex accepts one.
     dns = "amazonaws.com.cn" if partition == "aws-cn" else "amazonaws.com"
     ecr_host = f"{account}.dkr.ecr.{region}.{dns}"
-    uri = f"{ecr_host}/{REPO_NAME}:{a.tag}"
+    uri = f"{ecr_host}/{REPO_NAME}:{TAG}"
     bucket = f"{REPO_NAME}-build-{account}-{region}"
 
     print(f"Building {uri}\n  region: {region}   (nothing large crosses your connection)")
     ensure_repo(boto3.client("ecr", region_name=region))
     s3 = boto3.client("s3", region_name=region)
-    ensure_bucket(s3, bucket, region)
+    ensure_bucket(s3, bucket, region, account)
     # region_name on the IAM client too. IAM is global, but without it boto3 resolves the COMMERCIAL
     # endpoint, which defeats the partition derived above for aws-us-gov and aws-cn.
-    role_arn = ensure_role(boto3.client("iam", region_name=region), account, bucket, partition)
-    src_key = upload_context(s3, bucket)
+    role_arn = ensure_role(boto3.client("iam", region_name=region), account, bucket, region, partition)
+    src_key = upload_context(s3, bucket, account)
     ensure_project(cb, role_arn, bucket, src_key, ecr_host)
 
     build_id = cb.start_build(
         projectName=PROJECT_NAME,
-        environmentVariablesOverride=[{"name": "IMAGE_TAG", "value": a.tag}],
+        environmentVariablesOverride=[{"name": "IMAGE_TAG", "value": TAG}],
     )["build"]["id"]
     print(f"\nstarted build {build_id}")
     if a.write_config:
