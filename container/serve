@@ -56,8 +56,9 @@ fi
 # Escape hatch for any flag this script does not model. Keeps the container useful without a rebuild
 # every time you want to try something.
 if [[ -n "${EXTRA_ARGS:-}" ]]; then
-  # shellcheck disable=SC2206
-  ARGS+=(${EXTRA_ARGS})
+  # shlex, not shell word-splitting: quoted arguments with spaces survive, and a * is not a glob.
+  mapfile -t EXTRA < <(python3 -c 'import shlex, sys; print("\n".join(shlex.split(sys.argv[1])))' "${EXTRA_ARGS}")
+  ARGS+=("${EXTRA[@]}")
 fi
 
 echo "[serve] vllm serve ${ARGS[*]}"

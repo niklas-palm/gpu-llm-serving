@@ -1196,3 +1196,11 @@ def test_an_api_key_the_load_balancer_would_mismatch_is_rejected_at_synth(bad):
     case-insensitively. A key containing * became a prefix match; a long one failed at deploy."""
     with pytest.raises(ConfigError, match="apiKey"):
         synth(apiKey=bad)
+
+
+def test_extra_args_are_split_like_a_shell_would_without_globbing():
+    """`ARGS+=(${EXTRA_ARGS})` word-split and globbed: a quoted JSON value with spaces broke apart and a
+    * expanded against the container filesystem."""
+    body = _entrypoint()
+    assert "shlex.split" in body
+    assert "ARGS+=(${EXTRA_ARGS})" not in body
