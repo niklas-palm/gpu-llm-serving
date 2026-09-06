@@ -957,7 +957,8 @@ def test_every_deployment_gets_a_dashboard_and_the_two_universal_alarms():
     are true for any deployment ("an engine is down", "the load balancer is erroring"); the latency one
     needs a number only the operator has, so it is opt-in (tested separately)."""
     template = synth()
-    assert only(template, "AWS::CloudWatch::Dashboard")["DashboardName"] == "T-serving"
+    assert only(template, "AWS::CloudWatch::Dashboard")["DashboardName"] == "T-us-west-2", \
+        "dashboard names are account-wide, so the region has to be in the name"
     assert set(alarms(template)) == {"T-engines-unhealthy", "T-load-balancer-erroring"}
 
 
@@ -967,7 +968,7 @@ def test_the_dashboard_url_is_an_output_and_points_at_the_dashboard_created():
     template = synth()
     url = template["Outputs"]["DashboardUrl"]["Value"]
     assert url == ("https://us-west-2.console.aws.amazon.com/cloudwatch/home"
-                   "?region=us-west-2#dashboards:name=T-serving")
+                   "?region=us-west-2#dashboards:name=T-us-west-2")
     assert url.endswith(only(template, "AWS::CloudWatch::Dashboard")["DashboardName"])
 
 

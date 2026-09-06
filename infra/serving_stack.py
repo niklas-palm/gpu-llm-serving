@@ -764,7 +764,10 @@ service:
 
         # Named after the stack so it is findable without hunting through a hashed logical id, and so
         # the console URL can be printed as a plain string rather than a Ref nobody can click.
-        dashboard_name = f"{self.stack_name}-serving"
+        # Region in the name: CloudWatch dashboard names are account-wide, not regional. Two stacks in
+        # two regions with the same fixed name cannot both exist, and the second deploy fails at change
+        # set validation with "already exists".
+        dashboard_name = f"{self.stack_name}-{self.region}"
         dashboard = cloudwatch.Dashboard(self, "Dashboard", dashboard_name=dashboard_name)
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
@@ -925,7 +928,7 @@ service:
                 alarm_description=(
                     f"Requests are taking longer than {latency_alarm:g}s at p95. The fleet is "
                     f"overloaded or an engine is unhealthy. Check requests/min per task on the "
-                    f"{self.stack_name}-serving dashboard: if it is high, the fleet needs more "
+                    f"{dashboard_name} dashboard: if it is high, the fleet needs more "
                     f"instances (raise maxInstanceCount, or instanceCount if it is already capped)."),
                 threshold=latency_alarm,
                 # Three minutes, not one: a single minute over budget is what a task starting or
