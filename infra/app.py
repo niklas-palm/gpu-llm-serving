@@ -103,14 +103,21 @@ def _persist_generated_api_key() -> str:
             with open(LOCAL_CONFIG_PATH, "w") as fh:
                 fh.write("\n".join(lines) + "\n")
         else:
-            with open(LOCAL_CONFIG_PATH, "a") as fh:
+            # Created 0600 from the first byte; a file that already existed keeps its owner's mode
+            # unless we can tighten it. The key is a gate, not a secret, but other local users have no
+            # business reading it.
+            fd = os.open(LOCAL_CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a") as fh:
                 if not exists:
                     fh.write("# Local overrides, deep-merged over config.yaml. Gitignored.\n")
                 elif needs_newline:
                     fh.write("\n")
                 fh.write(f"apiKey: {key}\n")
-        # The key is a gate, not a secret, but there is no reason for other local users to read it.
-        os.chmod(LOCAL_CONFIG_PATH, 0o600)
+        try:
+            os.chmod(LOCAL_CONFIG_PATH, 0o600)
+        except OSError:
+            print(f"could not make {os.path.basename(LOCAL_CONFIG_PATH)} private (0600); the key was "
+                  "still saved", file=sys.stderr)
     except OSError as e:
         raise ConfigError(
             f"no apiKey configured, and {LOCAL_CONFIG_PATH} could not be written ({e}).\n"
