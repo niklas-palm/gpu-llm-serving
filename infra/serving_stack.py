@@ -194,17 +194,9 @@ class ServingStack(Stack):
         # is visible here instead of depending on the construct's internal child naming, which has
         # changed between CDK versions.
         gpu_user_data = ec2.UserData.for_linux()
-        if use_spot:
-            # Drain the task when a spot reclaim notice arrives, instead of letting the instance
-            # vanish mid-request. Without this the ECS agent does not deregister the target, so the
-            # load balancer keeps sending traffic to a dead task until the health check fails it -
-            # interval x threshold, up to ~150 s of 502s. Draining deregisters immediately; requests
-            # still running when the two-minute reclaim notice expires die with the instance. Set here
-            # rather than through the capacity provider's
-            # `spot_instance_draining`, which the construct only writes when the ASG has a `spotPrice`;
-            # a mixed-instances policy does not set one, so that option is a silent no-op here.
-            gpu_user_data.add_commands(
-                "echo ECS_ENABLE_SPOT_INSTANCE_DRAINING=true >> /etc/ecs/ecs.config")
+        # No ECS_ENABLE_SPOT_INSTANCE_DRAINING here: with managed draining on the capacity provider
+        # below, ECS drains the instance itself on the two-minute spot reclaim notice, and AWS documents
+        # the agent setting as redundant.
         # Tasks get credentials from the ECS credential endpoint, never from the instance's IMDS. Block
         # IMDS for awsvpc tasks explicitly rather than relying on the IMDSv2 hop limit to do it by
         # accident (the disableEcsImdsBlocking flag in cdk.json turns off the construct's own blocking).
@@ -443,10 +435,10 @@ class ServingStack(Stack):
                 healthy_threshold_count=2,
                 unhealthy_threshold_count=5,
             ),
-            # Long enough for an in-flight generation to finish. The default 30 s (and the container's
+            # Long enough for most in-flight generations to finish. The default 30 s (and the container's
             # 30 s stop timeout below) killed any request still generating when a task was replaced -
-            # on every scale-in and every deployment - and a non-streaming completion routinely runs
-            # longer than that. Draining holds the target open until the request completes.
+            # on every scale-in and every deployment. Draining holds the target open for this long; a
+            # streamed answer that runs longer than 180 s still dies when its task is replaced.
             deregistration_delay=Duration.seconds(180),
         )
 

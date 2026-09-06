@@ -745,18 +745,14 @@ def test_draining_gives_an_in_flight_generation_time_to_finish():
     assert int(container["StopTimeout"]) >= 120
 
 
-def test_spot_asks_for_a_rebalance_warning_and_drains_the_task():
-    """A reclaimed instance whose task never deregistered keeps receiving traffic until the health
-    check fails it - interval x threshold, up to ~150 s of 502s."""
-    template = synth(useSpot=True)
-    asg = only(template, "AWS::AutoScaling::AutoScalingGroup")
-    assert asg.get("CapacityRebalance") is True, "replace before the reclaim, not after"
-    launch_template = json.dumps(only(template, "AWS::EC2::LaunchTemplate"))
-    assert "ECS_ENABLE_SPOT_INSTANCE_DRAINING" in launch_template
-
-    # On-demand should not carry either.
-    on_demand = json.dumps(only(synth(useSpot=False), "AWS::EC2::LaunchTemplate"))
-    assert "ECS_ENABLE_SPOT_INSTANCE_DRAINING" not in on_demand
+def test_spot_fleets_rebalance_and_rely_on_managed_draining_not_the_agent_flag():
+    """ECS managed draining handles the spot reclaim notice itself, so the agent's
+    ECS_ENABLE_SPOT_INSTANCE_DRAINING is redundant and no longer set. Capacity rebalance stays on."""
+    spot = synth(useSpot=True)
+    lt = json.dumps(only(spot, "AWS::EC2::LaunchTemplate"))
+    assert "ECS_ENABLE_SPOT_INSTANCE_DRAINING" not in lt
+    assert only(spot, "AWS::AutoScaling::AutoScalingGroup").get("CapacityRebalance") is True
+    assert only(spot, "AWS::ECS::CapacityProvider")["AutoScalingGroupProvider"]["ManagedDraining"] == "ENABLED"
 
 
 def test_max_below_min_is_a_config_error_not_an_internal_one():
