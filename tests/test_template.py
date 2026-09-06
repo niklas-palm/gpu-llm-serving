@@ -1204,3 +1204,8 @@ def test_extra_args_are_split_like_a_shell_would_without_globbing():
     body = _entrypoint()
     assert "shlex.split" in body
     assert "ARGS+=(${EXTRA_ARGS})" not in body
+    # The consequence users must know: quoting follows shell rules. This is the documented example.
+    import shlex
+    example = """--speculative-config '{"method":"eagle3","model":"x","num_speculative_tokens":3}'"""
+    assert shlex.split(example) == ["--speculative-config",
+                                    '{"method":"eagle3","model":"x","num_speculative_tokens":3}']

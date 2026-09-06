@@ -132,10 +132,12 @@ estimatedParamsBillions: 30
 # docs/tuning.md, "Quantisation is two independent decisions".
 quantization: "fp8"
 
-# Optional. Flags appended verbatim to `vllm serve`, for anything this project does not model:
-#   extraArgs: "--data-parallel-size 2"
+# Optional. Flags appended to `vllm serve`, for anything this project does not model. Split like a
+# shell command line, so quote as you would in a shell; a JSON value needs single quotes around it:
+#   extraArgs: --data-parallel-size 2
+#   extraArgs: --speculative-config '{"method":"eagle3","model":"<speculator repo>","num_speculative_tokens":3}'
 # Unvalidated. The container logs the full command it runs. Do not leave `--enforce-eager` here
-# beyond diagnosing a startup problem: -85% decode.
+# beyond diagnosing a startup problem: -85% decode. docs/tuning.md, "Speculative decoding with EAGLE-3".
 extraArgs: ""
 
 # ---------------------------------------------------------------------------- tuning
