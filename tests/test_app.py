@@ -45,3 +45,15 @@ def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
     monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
     assert app.load_config()["apiKey"] == "keep-this-key-1234"
+
+
+@pytest.mark.parametrize("blank", ["apiKey:", 'apiKey: ""', "apiKey: ''", "apiKey: null", "apiKey: ~",
+                                   'apiKey: "   "', "apiKey:   # set on first deploy"])
+def test_every_spelling_of_a_blank_key_is_replaced_not_duplicated(tmp_path, monkeypatch, blank):
+    body, key = _persist(tmp_path, monkeypatch, f"region: us-east-2\n{blank}\n")
+    assert body.count("apiKey:") == 1 and f"apiKey: {key}" in body
+
+
+def test_the_local_config_is_not_world_readable(tmp_path, monkeypatch):
+    _persist(tmp_path, monkeypatch, None)
+    assert oct(os.stat(tmp_path / "config.local.yaml").st_mode & 0o777) == "0o600"

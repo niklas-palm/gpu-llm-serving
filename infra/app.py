@@ -91,10 +91,15 @@ def _persist_generated_api_key() -> str:
             needs_newline = bool(body) and not body.endswith("\n")
         # A blank `apiKey:` line already in the file is replaced, not appended to. Appending produced
         # two keys, and the file only worked because PyYAML takes the last.
-        if exists and any(line.split("#", 1)[0].strip() in ("apiKey:", 'apiKey: ""', "apiKey: ''")
-                          for line in body.splitlines()):
-            lines = [f"apiKey: {key}" if line.split("#", 1)[0].strip().startswith("apiKey:") else line
-                     for line in body.splitlines()]
+        def _blank_key_line(line: str) -> bool:
+            code = line.split("#", 1)[0].strip()
+            if not code.startswith("apiKey:"):
+                return False
+            loaded = yaml.safe_load(code.split(":", 1)[1] or "null")
+            return loaded is None or (isinstance(loaded, str) and not loaded.strip())
+
+        if exists and any(_blank_key_line(line) for line in body.splitlines()):
+            lines = [f"apiKey: {key}" if _blank_key_line(line) else line for line in body.splitlines()]
             with open(LOCAL_CONFIG_PATH, "w") as fh:
                 fh.write("\n".join(lines) + "\n")
         else:
@@ -104,6 +109,8 @@ def _persist_generated_api_key() -> str:
                 elif needs_newline:
                     fh.write("\n")
                 fh.write(f"apiKey: {key}\n")
+        # The key is a gate, not a secret, but there is no reason for other local users to read it.
+        os.chmod(LOCAL_CONFIG_PATH, 0o600)
     except OSError as e:
         raise ConfigError(
             f"no apiKey configured, and {LOCAL_CONFIG_PATH} could not be written ({e}).\n"
