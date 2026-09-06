@@ -678,6 +678,13 @@ Two caveats: **p99 leaves the budget long before p95** (13.10 s at 1024 concurre
 7.60 s), and these are **unique-prompt** figures; with prefix cache hits the same hardware goes roughly
 2× further.
 
+**Two options measured after the table above, both large.** On the same fleet shape (eight
+`g7e.2xlarge`, unique 1,000-token prompts, 768 concurrent): an EAGLE-3 speculator, one line in
+`extraArgs`, raised throughput 24% and cut p95 from 6.33 s to 5.62 s; the NVFP4 checkpoint of the same
+model raised it 28% and cut p95 to 5.06 s. Neither is the default: the speculator is tied to the model,
+and NVFP4's output quality is unmeasured. *Speculative decoding* and *NVFP4* in
+[docs/tuning.md](docs/tuning.md).
+
 **Not measured**, so treat as estimates: tensor parallelism above 2 (four- and eight-GPU instances were
 not obtainable); autoscaling timings on fleets other than 6 → 8; output quality of any quantisation
 (every figure here is throughput); prompts longer than 4,000 tokens, and mixing long and short requests

@@ -276,6 +276,22 @@ chosen with access to the model and data.
 **Planning consequence:** bf16 is *not* the fallback for a model with no official FP8 build. Choose it
 only on quality grounds.
 
+#### NVFP4: Blackwell's native 4-bit, measured on eight instances
+
+`nvidia/Qwen3-30B-A3B-NVFP4` with an fp8 KV cache, against load-time FP8 on the same eight
+`g7e.2xlarge`, unique 1,000-token prompts:
+
+| Concurrency | FP8 input tok/s | NVFP4 | Gain | p95 FP8 | p95 NVFP4 |
+|---|---|---|---|---|---|
+| 256 | 59,213 | 73,923 | **+25%** | 4.03 s | 3.34 s |
+| 512 | 95,539 | 118,125 | **+24%** | 5.23 s | 4.38 s |
+| 768 | 119,223 | 152,672 | **+28%** | 6.33 s | 5.06 s |
+
+p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
+is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
+another ~15 GiB. Output quality was not measured, the same caveat as AWQ below. To use it, set `modelId`
+to the NVFP4 checkpoint and clear `quantization`.
+
 #### AWQ 4-bit: measured fastest, quality unvalidated
 
 A 4-bit AWQ build measured the best throughput on both prompt conditions: **82,112** cached and
@@ -654,12 +670,34 @@ is pure speedup when it works. It failed for three compounding reasons:
 
 Revisit only for a large model, at low concurrency, on a workload whose output quotes its input.
 
-### Multi-token prediction and EAGLE: not a configuration option
+### Speculative decoding with EAGLE-3: the largest gain measured, and it is a flag
 
-The same idea with *trained* heads that predict several future tokens, at far higher acceptance rates.
-Neither can be enabled at serving time; the heads must ship inside the checkpoint. If decode latency
-binds and you can choose the model, **whether a checkpoint ships these heads is a selection
-criterion**: check its config for fields like `num_nextn_predict_layers`.
+An EAGLE-3 draft model is a small separate checkpoint trained against the target model. vLLM 0.28 loads
+it with `--speculative-config`; nothing has to ship inside the target checkpoint. Publishers release them
+alongside the model. For the shipped model:
+
+```yaml
+extraArgs: --speculative-config '{"method":"eagle3","model":"RedHatAI/Qwen3-30B-A3B-Instruct-2507-speculator.eagle3","num_speculative_tokens":3}'
+```
+
+Measured on eight `g7e.2xlarge`, FP8 weights, fp8 KV cache, unique 1,000-token prompts, 190-token
+answers, 60 s per level after warm-up:
+
+| Concurrency | Without, input tok/s | With EAGLE-3 | Gain | p95 without | p95 with | Decode tok/s per request |
+|---|---|---|---|---|---|---|
+| 8 | | 7,381 | | | 1.22 s | 189 |
+| 64 | | 32,842 | | | 2.02 s | 105 |
+| 256 | 59,213 | 83,707 | **+41%** | 4.03 s | 3.17 s | 48.9 → 67.9 |
+| 512 | 95,539 | 123,924 | **+30%** | 5.23 s | 4.32 s | 39.2 → 50.6 |
+| 768 | 119,223 | 147,914 | **+24%** | 6.33 s | 5.62 s | 33.0 → 40.7 |
+
+Mean acceptance length 2.2 of 3 drafted tokens. Output is the same distribution as without speculation;
+the engine warns that `min_p` and `logit_bias` are unsupported with it. Not shipped as the default because
+the draft model is specific to the target: change `modelId` and this line must change with it, and a
+mismatch fails at startup.
+
+An earlier version of this document said EAGLE and multi-token prediction were not configuration options
+and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
 
 ---
 
