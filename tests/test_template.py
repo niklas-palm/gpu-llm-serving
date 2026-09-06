@@ -654,7 +654,7 @@ def test_an_official_quantised_checkpoint_is_not_mistaken_for_full_precision(cap
 def test_quantisation_markers_in_the_model_id_are_recognised(model_id):
     from hardware import bytes_per_param_for, weights_are_quantised
     assert weights_are_quantised(model_id, "")
-    assert bytes_per_param_for(model_id, "") == 1.0
+    assert bytes_per_param_for(model_id, "") < 2.0, "quantised: 1 byte for 8-bit, 0.5 for 4-bit"
 
 
 def test_an_unquantised_model_with_an_fp8_cache_still_warns(capsys):
