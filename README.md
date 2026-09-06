@@ -25,7 +25,8 @@ when not in use: see [Operating](#operating).
 The default fleet is **16 `g7e.2xlarge`**, autoscaling to 24: 128 vCPU at the minimum, 192 at the
 ceiling. Request the G-instance quota for that before deploying (see [Check your quota](#check-your-quota));
 a fresh account rarely has it. With less quota, lower `instanceCount` and `maxInstanceCount` in
-`config.local.yaml` to what fits, and raise them later.
+`config.local.yaml` to what fits, and raise them later. For a first deployment, set `useSpot: true` there
+too: on-demand g7e.2xlarge had no capacity in two regions on the same day while spot launched in a minute.
 
 ```bash
 pip install -r requirements.txt && npm install -g aws-cdk
