@@ -1163,3 +1163,9 @@ def test_the_root_volume_is_encrypted():
     surfaces as an ASG activity error rather than at synth."""
     lt = only(synth(), "AWS::EC2::LaunchTemplate")["LaunchTemplateData"]
     assert lt["BlockDeviceMappings"][0]["Ebs"]["Encrypted"] is True
+
+
+def test_a_repeated_zone_is_rejected_even_when_two_distinct_ones_exist():
+    """[a, a, b] passed the distinct-count check and failed at subnet creation minutes later."""
+    with pytest.raises(ConfigError, match="repeats"):
+        synth(availabilityZones=["us-west-2a", "us-west-2a", "us-west-2b"])

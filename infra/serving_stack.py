@@ -139,9 +139,10 @@ class ServingStack(Stack):
         # while editing a list, and counting entries passed it - then CloudFormation rejected two
         # subnets in one AZ minutes into the deploy, which is exactly what this check exists to
         # forestall.
-        if configured_azs and len(set(configured_azs)) < 2:
+        if configured_azs and (len(set(configured_azs)) < 2
+                               or len(set(configured_azs)) != len(configured_azs)):
             raise ConfigError(
-                f"availabilityZones needs at least two DIFFERENT zones (got {configured_azs}).\n"
+                f"availabilityZones needs at least two zones with no repeats (got {configured_azs}).\n"
                 "  A load balancer requires subnets in two, even when the GPU instances only ever\n"
                 "  land in one of them."
             )
