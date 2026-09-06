@@ -157,7 +157,8 @@ def test_defaults_match_the_shipped_config():
     key. If the two drift, the documented default and the real one differ silently."""
     import yaml
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    shipped = yaml.safe_load(open(os.path.join(root, "config.yaml")))["tuning"]
+    with open(os.path.join(root, "config.yaml")) as fh:
+        shipped = yaml.safe_load(fh)["tuning"]
 
     assert set(shipped) == set(DEFAULT_TUNING), \
         f"config.yaml and DEFAULT_TUNING disagree on which keys exist: " \

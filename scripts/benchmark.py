@@ -84,8 +84,8 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int,
         t.start()
     time.sleep(seconds)
     stop.set()
-    with lock:
-        q.put({"wall": time.perf_counter() - t_start, **stats})
+    with lock:   # a copy of lat: threads still finishing a request would append to the shared list
+        q.put({"wall": time.perf_counter() - t_start, **stats, "lat": list(stats["lat"])})
 
 
 def run_level(a: argparse.Namespace, model: str, total: int) -> dict:

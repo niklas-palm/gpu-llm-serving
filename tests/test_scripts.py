@@ -64,6 +64,7 @@ def test_a_malformed_usage_body_is_one_failed_request_not_an_ok_and_a_failure(mo
         def post(self, *a, **k): return Resp({"usage": {"input_tokens": [1], "output_tokens": 7}})
 
     monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)   # worker ignores SIGINT; not in pytest
     q = mp.Queue()
     bench.worker("http://u", "k", "m", conc=2, in_tok=10, out_tok=5, seconds=0.05, shared=True, q=q)
     r = q.get(timeout=5)
