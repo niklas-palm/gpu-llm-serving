@@ -1156,3 +1156,10 @@ def test_security_group_rule_descriptions_use_only_characters_ec2_accepts():
     assert descriptions
     bad = [d for d in descriptions if not allowed.match(d)]
     assert not bad, bad
+
+
+def test_the_root_volume_is_encrypted():
+    """Accounts that enforce EBS encryption with an SCP refuse the launch otherwise, and the failure
+    surfaces as an ASG activity error rather than at synth."""
+    lt = only(synth(), "AWS::EC2::LaunchTemplate")["LaunchTemplateData"]
+    assert lt["BlockDeviceMappings"][0]["Ebs"]["Encrypted"] is True

@@ -216,6 +216,9 @@ class ServingStack(Stack):
                     volume_type=ec2.EbsDeviceVolumeType.GP3,
                     throughput=ROOT_VOLUME_THROUGHPUT_MBPS,
                     iops=ROOT_VOLUME_IOPS,
+                    # Encrypted with the account's default EBS key. Many accounts enforce this with
+                    # an SCP, and an unencrypted volume then fails the launch with no obvious reason.
+                    encrypted=True,
                     delete_on_termination=True),
             )],
         )
