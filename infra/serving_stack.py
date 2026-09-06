@@ -92,12 +92,18 @@ class ServingStack(Stack):
         # derives TP=1, synthesises cleanly, deploys, and then runs out of VRAM while loading.
         # minimum, because a finite-but-nonsensical size passed silently: a negative parameter count
         # produced negative weight bytes and derived a happy TP=1.
+        # maximum: 1e300 passed the finiteness check and overflowed to infinity in model_bytes, which
+        # escaped as an OverflowError traceback instead of a ConfigError.
         est_params_b = _num(_given(cfg.get("estimatedParamsBillions"), 30),
-                            "estimatedParamsBillions", float, minimum=0.001)
+                            "estimatedParamsBillions", float, minimum=0.001, maximum=100_000)
         # Considers the MODEL ID as well as `quantization`: a publisher's official fp8 build is
         # already quantised on disk and correctly leaves `quantization` empty, so keying off that
         # alone doubles the estimated weight size and misreads a correct configuration.
-        bytes_per_param = bytes_per_param_for(cfg["modelId"], cfg.get("quantization"))
+        # Stripped once, here, so a padded or non-string value cannot reach the task definition as-is:
+        # `quantization: "  "` shipped `--quantization "  "` while the size estimate treated it as bf16.
+        cfg["modelId"] = str(cfg["modelId"]).strip()
+        cfg["quantization"] = str(_given(cfg.get("quantization"), "")).strip()
+        bytes_per_param = bytes_per_param_for(cfg["modelId"], cfg["quantization"])
         est_weight_bytes = model_bytes(est_params_b, bytes_per_param)
 
         # Resolve tensorParallel and replicas together - they are one decision about how the
@@ -524,6 +530,12 @@ class ServingStack(Stack):
         # and never appears in the template, the outputs or the logs. Without it, public models work and
         # gated ones fail with a 401 while pulling.
         hf_secret_name = str(_given(cfg.get("hfTokenSecretName"), "")).strip()
+        if hf_secret_name.startswith("arn:"):
+            # from_secret_name_v2 would build a second ARN around this one; the task then fails at
+            # start with ResourceNotFound, after a full deploy.
+            raise ConfigError(
+                "hfTokenSecretName takes the secret's NAME, not its ARN: the part after 'secret:',\n"
+                "  without the six-character suffix, e.g. gpu-llm-serving/hf-token.")
         container_secrets = {}
         if hf_secret_name:
             hf_secret = secretsmanager.Secret.from_secret_name_v2(self, "HfToken", hf_secret_name)

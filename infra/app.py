@@ -152,7 +152,8 @@ def load_config() -> dict:
     # vLLM's own command-line arguments and is passed none, so the task would start and serve nothing.
     # Failing here costs a second; failing that way costs a 20-minute deploy and looks like a broken
     # model.
-    if not cfg.get("image"):
+    cfg["image"] = str(cfg.get("image") or "").strip()
+    if not cfg["image"]:
         raise ConfigError(
             "no serving image configured.\n"
             "  Build and push it first; --write-config saves the URI to config.local.yaml:\n"

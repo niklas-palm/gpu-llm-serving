@@ -270,7 +270,7 @@ def _given(value: object, default: object) -> object:
 
 
 def _num(value: object, key: str, cast: type = int,
-         minimum: float | None = None) -> int | float:
+         minimum: float | None = None, maximum: float | None = None) -> int | float:
     """Coerce a config value, reporting a bad one as a ConfigError rather than a raw ValueError.
 
     Needed because `ConfigError` subclasses `ValueError`, so the relationship is the wrong way round
@@ -314,6 +314,8 @@ def _num(value: object, key: str, cast: type = int,
         )
     if minimum is not None and number < minimum:
         raise ConfigError(f"{key} must be at least {minimum:g} (got {value!r}).")
+    if maximum is not None and number > maximum:
+        raise ConfigError(f"{key} must be at most {maximum:g} (got {value!r}).")
     return number
 
 
@@ -522,7 +524,8 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
     """
     if not str(tuning.get("kvCacheDtype") or "").startswith("fp8"):
         return None
-    if float(tuning.get("gpuMemoryUtilization", 0.95)) <= 0.90:
+    util = float(tuning.get("gpuMemoryUtilization", 0.95))
+    if util <= 0.90:
         return None
     # ONE threshold, applied whatever the weights' precision. Below about half the card there is
     # enough headroom to absorb the larger batches an fp8 cache allows; above it there is not, and the
@@ -535,7 +538,7 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
     return (
         f"{weights} weights occupying {weight_bytes_per_gpu / 1024**3:.1f} GiB per GPU, with "
         f"kvCacheDtype: fp8 at "
-        f"gpuMemoryUtilization: {tuning['gpuMemoryUtilization']}.\n"
+        f"gpuMemoryUtilization: {util}.\n"
         "  An fp8 cache holds about twice as many tokens in the same budget, which raises the batch\n"
         "  size the scheduler runs, which raises the per-step workspace the model allocates. Large\n"
         "  weights leave nothing to absorb that, so the engine starts, passes its health check, and\n"

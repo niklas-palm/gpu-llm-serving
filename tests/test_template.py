@@ -1210,3 +1210,15 @@ def test_unparseable_extra_args_stop_the_start_instead_of_being_dropped(tmp_path
 def test_whitespace_only_extra_args_add_nothing(tmp_path):
     code, argv, _ = _run_entrypoint(tmp_path, EXTRA_ARGS="   ")
     assert code == 0 and "" not in argv
+
+
+def test_config_edge_cases_are_config_errors_not_tracebacks():
+    """Each of these reached a traceback or a broken task definition from the correctness review:
+    an ARN where a secret name belongs, a parameter count that overflows, padding in quantization."""
+    with pytest.raises(ConfigError, match="NAME, not its ARN"):
+        synth(hfTokenSecretName="arn:aws:secretsmanager:us-west-2:111122223333:secret:hf-token-AbCdEf")
+    with pytest.raises(ConfigError, match="at most"):
+        synth(estimatedParamsBillions=1e300)
+    env = {e["Name"]: e["Value"] for e in
+           only(synth(quantization="  "), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
+    assert "QUANTIZATION" not in env, "blank quantization means none, not a flag with spaces in it"
