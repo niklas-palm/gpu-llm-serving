@@ -289,8 +289,13 @@ only on quality grounds.
 
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
-another ~15 GiB. Output quality was not measured, the same caveat as AWQ below. To use it, set `modelId`
-to the NVFP4 checkpoint and clear `quantization`.
+another ~15 GiB. Output quality was not measured, the same caveat as AWQ below, which is why FP8 stays
+the default. To use it, set `modelId` to the NVFP4 checkpoint and clear `quantization`.
+
+**NVFP4 and EAGLE-3 stack.** The two together, on six instances at the same 96 requests per engine:
+133,463 input tok/s, 22,244 per instance against 14,903 for the shipped FP8, **+49% per GPU**, p95
+4.54 s against 6.33 s. Acceptance length fell from 2.2 to 1.95, since the speculator was trained against
+the bf16 model, and it still added 17% on top of NVFP4 alone.
 
 #### AWQ 4-bit: measured fastest, quality unvalidated
 
