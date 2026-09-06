@@ -233,7 +233,9 @@ Spot instances are reclaimed with two minutes' notice; normally the ASG launches
 protect a hard-won instance by suspending the ASG processes that can take it away:
 
 ```bash
-REGION=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['region'])")
+REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
+[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
+print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
 ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`AsgName`].OutputValue' --output text)
 
@@ -529,7 +531,9 @@ fleet it can never grow (no tasks, so no request-rate metric), and `MaxSize` sta
 deploy never lowers capacity. Synth rejects that combination.
 
 ```bash
-REGION=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['region'])")
+REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
+[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
+print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
 CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)
 ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
@@ -596,7 +600,9 @@ project and the role `GpuLlmServingCodeBuildRole`. Nor the `gpu-llm-serving/hf-t
 one.
 
 ```bash
-REGION=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['region'])")
+REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
+[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
+print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 aws ecr delete-repository --repository-name gpu-llm-serving --force --region "$REGION"
 aws s3 rb "s3://gpu-llm-serving-build-$ACCOUNT-$REGION" --force --region "$REGION"

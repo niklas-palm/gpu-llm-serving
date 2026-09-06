@@ -10,7 +10,9 @@ the triage commands.
 Set `REGION` first. Against the wrong region every command fails as if the stack does not exist:
 
 ```bash
-REGION=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['region'])")
+REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
+[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
+print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
 
 CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)
