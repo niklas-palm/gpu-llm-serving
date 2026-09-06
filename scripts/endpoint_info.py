@@ -15,10 +15,9 @@ import sys
 
 import boto3
 
+from build_image import _run, config_region   # same directory
+
 DEFAULT_STACK = "GpuLlmServing"
-
-
-from build_image import _run, config_region  # noqa: E402  (same directory)
 
 
 def main() -> int:

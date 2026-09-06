@@ -31,13 +31,19 @@ def test_a_file_without_a_trailing_newline_gets_one_before_the_key(tmp_path, mon
     assert body == f"region: us-east-2\napiKey: {key}\n"
 
 
-def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
-    """load_config only generates when no key is configured."""
+def _load_from(tmp_path, monkeypatch, body: str) -> dict:
     cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text("region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: m\napiKey: keep-this-key-1234\nimage: x/y:z\n")
+    cfg_path.write_text(body)
     monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
     monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
-    assert app.load_config()["apiKey"] == "keep-this-key-1234"
+    return app.load_config()
+
+
+def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
+    """load_config only generates when no key is configured."""
+    cfg = _load_from(tmp_path, monkeypatch,
+                     "region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: m\napiKey: keep-this-key-1234\nimage: x/y:z\n")
+    assert cfg["apiKey"] == "keep-this-key-1234"
 
 
 @pytest.mark.parametrize("blank", ["apiKey:", 'apiKey: ""', "apiKey: ''", "apiKey: null", "apiKey: ~",
@@ -45,8 +51,7 @@ def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
 def test_every_spelling_of_a_blank_key_is_replaced_not_duplicated(tmp_path, monkeypatch, blank):
     """Appending gave two apiKey lines; the file worked only because PyYAML keeps the last one."""
     body, key = _persist(tmp_path, monkeypatch, f"region: us-east-2\n{blank}\ninstanceCount: 2\n")
-    assert body.count("apiKey:") == 1 and f"apiKey: {key}\n" in body
-    assert "region: us-east-2" in body and "instanceCount: 2" in body, "neighbouring lines survive"
+    assert body == f"region: us-east-2\napiKey: {key}\ninstanceCount: 2\n"
 
 
 def test_the_local_config_is_not_world_readable(tmp_path, monkeypatch):
@@ -89,31 +94,18 @@ def test_missing_serving_image_is_rejected_at_synth(tmp_path):
 def test_a_whitespace_only_required_value_is_missing(tmp_path, monkeypatch):
     """`modelId: "  "` passed the required-values check, synthesised MODEL_ID="" and the task died
     after a full deploy with 'MODEL_ID is required'."""
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text('region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: "   "\napiKey: some-stable-key-1234\n')
-    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
-    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
     with pytest.raises(app.ConfigError, match="missing required values: modelId"):
-        app.load_config()
+        _load_from(tmp_path, monkeypatch,
+                   'region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: "   "\napiKey: some-stable-key-1234\n')
 
 
 def test_a_non_string_apikey_is_not_treated_as_blank(tmp_path, monkeypatch):
     """load_config called `apiKey: 0` blank and generated a key, but the line-replacer did not, so the
     file got a second apiKey line. One predicate now: 0 is a value, and synth rejects it."""
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text("region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: org/m\napiKey: 0\nimage: x\n")
-    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
-    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
-    assert app.load_config()["apiKey"] == 0
+    cfg = _load_from(tmp_path, monkeypatch,
+                     "region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: org/m\napiKey: 0\nimage: x\n")
+    assert cfg["apiKey"] == 0
     assert not (tmp_path / "config.local.yaml").exists()
-
-
-def _load_from(tmp_path, monkeypatch, body: str) -> dict:
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text(body)
-    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
-    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
-    return app.load_config()
 
 
 @pytest.mark.parametrize("body, match", [
@@ -132,4 +124,4 @@ def test_an_indented_apikey_line_is_not_the_top_level_key(tmp_path, monkeypatch)
     """The replacer matched `apiKey:` at any indentation and rewrote it at column 0, breaking the
     block it belonged to."""
     body, key = _persist(tmp_path, monkeypatch, "region: us-east-2\ntuning:\n  apiKey:\n  maxNumSeqs: 128\n")
-    assert "  apiKey:\n  maxNumSeqs: 128\n" in body and body.endswith(f"apiKey: {key}\n")
+    assert body == f"region: us-east-2\ntuning:\n  apiKey:\n  maxNumSeqs: 128\napiKey: {key}\n"

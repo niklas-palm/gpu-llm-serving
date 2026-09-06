@@ -311,22 +311,16 @@ def test_extra_args_reaches_the_container():
     to diagnose a reluctant engine. It was documented in three places before it was plumbed, so a
     reader following that advice had nowhere to put it."""
     template = synth(extraArgs="--data-parallel-size 2")
-    task_def = only(template, "AWS::ECS::TaskDefinition")
-    env = {e["Name"]: e.get("Value")
-           for e in task_def["ContainerDefinitions"][0]["Environment"]}
+    env = {e["Name"]: e.get("Value") for e in vllm_container(template)["Environment"]}
     assert env.get("EXTRA_ARGS") == "--data-parallel-size 2"
 
 
 def test_empty_extra_args_is_omitted_entirely():
     """An empty string must not reach the container as a variable at all."""
-    task_def = only(synth(extraArgs=""), "AWS::ECS::TaskDefinition")
-    env = {e["Name"]: e.get("Value")
-           for e in task_def["ContainerDefinitions"][0]["Environment"]}
+    env = {e["Name"]: e.get("Value") for e in vllm_container(synth(extraArgs=""))["Environment"]}
     assert "EXTRA_ARGS" not in env
 
-    task_def = only(synth(), "AWS::ECS::TaskDefinition")
-    env = {e["Name"]: e.get("Value")
-           for e in task_def["ContainerDefinitions"][0]["Environment"]}
+    env = {e["Name"]: e.get("Value") for e in vllm_container(synth())["Environment"]}
     assert "EXTRA_ARGS" not in env
 
 
@@ -554,8 +548,7 @@ def test_the_largest_instance_runs_one_engine_per_gpu_without_being_told():
     service = only(template, "AWS::ECS::Service")
     assert service["DesiredCount"] == 16
 
-    task_def = only(template, "AWS::ECS::TaskDefinition")
-    container = task_def["ContainerDefinitions"][0]
+    container = vllm_container(template)
     gpu = [r for r in container["ResourceRequirements"] if r["Type"] == "GPU"]
     assert gpu[0]["Value"] == "1"
     # Eight reservations have to fit the host, or ECS places one task and leaves seven GPUs idle.
@@ -621,8 +614,7 @@ def test_an_image_from_another_registry_is_still_accepted():
     """The ECR path must not become the only path - a public or third-party image has to keep
     working, it simply gets no grant because none is needed."""
     template = synth(image="vllm/vllm-openai:v0.28.0")
-    task_def = only(template, "AWS::ECS::TaskDefinition")
-    assert task_def["ContainerDefinitions"][0]["Image"] == "vllm/vllm-openai:v0.28.0"
+    assert vllm_container(template)["Image"] == "vllm/vllm-openai:v0.28.0"
 
 
 def test_an_official_quantised_checkpoint_is_not_mistaken_for_full_precision(capsys):

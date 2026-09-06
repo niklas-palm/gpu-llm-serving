@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "infra"))
 
-from hardware import (ConfigError, bytes_per_param_for, DEFAULT_TUNING, INSTANCES, _given, _mapping, _num,
+from hardware import (ConfigError, bytes_per_param_for, weights_are_quantised, DEFAULT_TUNING, INSTANCES, _given, _mapping, _num,
                       decode_ceiling_tokens_per_sec, derive_tensor_parallel, get_instance,
                       memory_pressure_warning, model_bytes, resolve_topology,
                       validate_tuning)
@@ -473,7 +473,6 @@ def test_an_absent_block_is_not_an_error():
 def test_bytes_per_parameter_follows_the_quantisation_width(model_id, quantization, expected):
     """4-bit formats were counted as 1 byte, doubling the estimate and deriving TP=2 for a model that
     fits one GPU."""
-    from hardware import bytes_per_param_for
     assert bytes_per_param_for(model_id, quantization) == expected
 
 
@@ -486,6 +485,5 @@ def test_nf4_is_sized_as_four_bit():
 def test_the_recommended_nvfp4_checkpoint_counts_as_quantised():
     """The 4-bit markers knew fp4 but the quantised markers did not, so the NVFP4 build the README
     recommends was sized at half a byte per parameter and still reported as unquantised."""
-    from hardware import weights_are_quantised
     assert weights_are_quantised("nvidia/Qwen3-30B-A3B-NVFP4", "")
     assert bytes_per_param_for("nvidia/Qwen3-30B-A3B-NVFP4", "") == 0.5

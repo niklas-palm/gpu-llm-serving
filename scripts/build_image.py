@@ -289,7 +289,6 @@ def report(build: dict) -> None:
                     print(f"      {ctx['message'][:200]}")
 
 
-
 # CodeBuild's terminal statuses do not mean the same thing, and printing one message for all of them
 # sends a reader looking in the wrong place. FAULT and TIMED_OUT are CodeBuild's problem; FAILED is
 # usually yours.
@@ -347,8 +346,6 @@ def write_image_uri(uri: str) -> None:
     """Write `image: <uri>` into config.local.yaml, replacing any existing image line."""
     # config.local.yaml, never config.yaml. The URI contains the account id, and config.yaml is
     # tracked - a test fails if an account id appears in it, precisely so this cannot leak.
-    # Next to whichever config is in use, the same rule as app.py, or a run with $CONFIG pointing
-    # elsewhere writes a file the deploy never reads.
     path = local_config_path()
     header = ("# Local overrides, deep-merged over config.yaml. Gitignored, so this is where\n"
               "# account-specific values belong.\n")
