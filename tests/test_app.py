@@ -12,7 +12,7 @@ app = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(app)
 
 
-def _persist(tmp_path, monkeypatch, existing: str | None) -> str:
+def _persist(tmp_path, monkeypatch, existing: str | None) -> tuple[str, str]:
     path = tmp_path / "config.local.yaml"
     if existing is not None:
         path.write_text(existing)
@@ -31,13 +31,6 @@ def test_a_file_without_a_trailing_newline_gets_one_before_the_key(tmp_path, mon
     assert body == f"region: us-east-2\napiKey: {key}\n"
 
 
-def test_a_blank_apikey_line_is_replaced_not_duplicated(tmp_path, monkeypatch):
-    """Appending gave two apiKey lines; the file worked only because PyYAML keeps the last one."""
-    body, key = _persist(tmp_path, monkeypatch, "region: us-east-2\napiKey:\ninstanceCount: 2\n")
-    assert body.count("apiKey:") == 1
-    assert f"apiKey: {key}\n" in body and "instanceCount: 2" in body
-
-
 def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
     """load_config only generates when no key is configured."""
     cfg_path = tmp_path / "config.yaml"
@@ -50,8 +43,10 @@ def test_an_existing_key_is_left_alone_by_load_config(tmp_path, monkeypatch):
 @pytest.mark.parametrize("blank", ["apiKey:", 'apiKey: ""', "apiKey: ''", "apiKey: null", "apiKey: ~",
                                    'apiKey: "   "', "apiKey:   # set on first deploy"])
 def test_every_spelling_of_a_blank_key_is_replaced_not_duplicated(tmp_path, monkeypatch, blank):
-    body, key = _persist(tmp_path, monkeypatch, f"region: us-east-2\n{blank}\n")
-    assert body.count("apiKey:") == 1 and f"apiKey: {key}" in body
+    """Appending gave two apiKey lines; the file worked only because PyYAML keeps the last one."""
+    body, key = _persist(tmp_path, monkeypatch, f"region: us-east-2\n{blank}\ninstanceCount: 2\n")
+    assert body.count("apiKey:") == 1 and f"apiKey: {key}\n" in body
+    assert "region: us-east-2" in body and "instanceCount: 2" in body, "neighbouring lines survive"
 
 
 def test_the_local_config_is_not_world_readable(tmp_path, monkeypatch):

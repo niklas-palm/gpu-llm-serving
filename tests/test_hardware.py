@@ -269,7 +269,7 @@ def test_vcpu_per_gpu_is_not_monotonic_in_instance_size():
     """The reason that column is worth publishing. A reader assuming 'bigger instance = more host per
     engine' would pick a 48xlarge over an 8xlarge and get less CPU per engine, not more."""
     assert INSTANCES["g7e.8xlarge"].vcpu_per_gpu > INSTANCES["g7e.48xlarge"].vcpu_per_gpu
-    # And the cheapest size is the thinnest, which is exactly the unverified assumption the docs flag.
+    # And the cheapest size is the thinnest, which is exactly the untested assumption the docs flag.
     assert INSTANCES["g7e.2xlarge"].vcpu_per_gpu < INSTANCES["g7e.12xlarge"].vcpu_per_gpu
 
 

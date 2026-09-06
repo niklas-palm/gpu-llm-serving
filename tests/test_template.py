@@ -92,7 +92,7 @@ def _entrypoint() -> str:
 def test_container_mount_matches_the_path_the_entrypoint_uses():
     """The mount is inert if it lands somewhere the entrypoint does not write to."""
     template = synth()
-    mount = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["MountPoints"][0]
+    mount = vllm_container(template)["MountPoints"][0]
     body = _entrypoint()
     assert f'SHARED_CACHE="${{SHARED_CACHE:-{mount["ContainerPath"]}}}"' in body
 
@@ -104,7 +104,7 @@ def test_the_hugging_face_cache_also_lands_on_the_shared_volume():
     container kept it, and a crash-looping task filled the root volume - the exact disk exhaustion the
     shared volume exists to prevent.
     """
-    mount = only(synth(), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["MountPoints"][0]
+    mount = vllm_container(synth())["MountPoints"][0]
     body = _entrypoint()
     assert "export HF_HOME=" in body, "the hub cache must be redirected, not left at its default"
     assert "HUGGINGFACE_HUB_CACHE" in body
@@ -167,14 +167,14 @@ def test_recommended_eight_gpu_shape_places_all_eight_engines():
     replica count, and `replicas` x GPUs-per-replica must not exceed the instance's GPUs.
     """
     template = synth(instanceType="g7e.48xlarge", tuning={"tensorParallel": 1, "replicas": 8})
-    container = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]
+    container = vllm_container(template)
     gpu = [r for r in container["ResourceRequirements"] if r["Type"] == "GPU"][0]
 
     assert int(gpu["Value"]) == 1, "one GPU per engine"
     assert only(template, "AWS::ECS::Service")["DesiredCount"] == 8, "one task per replica"
 
     single = synth(instanceType="g7e.48xlarge", tuning={"tensorParallel": 1, "replicas": 1})
-    whole = only(single, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Memory"]
+    whole = vllm_container(single)["Memory"]
     assert container["Memory"] == whole // 8, "the host share is divided between the replicas"
     assert container["Memory"] * 8 <= whole, "eight tasks must fit in what one task could claim"
 
@@ -183,7 +183,7 @@ def test_documented_high_cache_hit_alternative_also_places():
     """4 x TP=2 is documented as the alternative for workloads with shared prompt prefixes, so it
     has to work too."""
     template = synth(instanceType="g7e.48xlarge", tuning={"tensorParallel": 2, "replicas": 4})
-    container = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]
+    container = vllm_container(template)
     gpu = [r for r in container["ResourceRequirements"] if r["Type"] == "GPU"][0]
 
     assert int(gpu["Value"]) == 2
@@ -194,7 +194,7 @@ def test_measured_engine_settings_reach_the_container():
     """Each of these is a measured default. A knob that is validated but never passed to the engine
     is worse than no knob, because the config file then documents behaviour that does not happen."""
     env = {e["Name"]: e["Value"]
-           for e in only(synth(), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
+           for e in vllm_container(synth())["Environment"]}
 
     assert env["KV_CACHE_DTYPE"] == "fp8"            # +12% decode
     assert env["MAX_NUM_SEQS"] == "256"              # 128 -> 256 measured +1.4%
@@ -211,7 +211,7 @@ def test_fully_unquantised_deployment_is_supported():
     refuses both must still produce a working stack rather than an error or a silent fp8 cache."""
     template = synth(quantization="", tuning={"kvCacheDtype": "auto"})
     env = {e["Name"]: e["Value"]
-           for e in only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
+           for e in vllm_container(template)["Environment"]}
 
     assert env["KV_CACHE_DTYPE"] == "auto"
     assert "QUANTIZATION" not in env, "an empty quantization must not reach the engine as a flag"
@@ -259,7 +259,10 @@ def vllm_container(template: dict) -> dict:
 def test_no_hugging_face_token_unless_a_secret_is_named():
     """Public models need none, and a token is a real credential, so it is opt-in."""
     assert "Secrets" not in vllm_container(synth())
-    assert "ModelName" in synth()["Outputs"]
+
+
+def test_the_model_name_output_is_the_model_id_clients_must_send():
+    assert synth(modelId="org/some-model")["Outputs"]["ModelName"]["Value"] == "org/some-model"
 
 
 def test_a_named_secret_reaches_the_engine_as_hf_token_and_only_the_engine():
@@ -288,7 +291,7 @@ def test_shared_memory_is_always_raised(instance_type, tp):
 
 
 def test_circuit_breaker_is_off():
-    """Deliberate: it rolls back to a revision that is frequently also broken, and the two then
+    """On purpose: it rolls back to a revision that is frequently also broken, and the two then
     contend for the same GPU indefinitely. Documented in serving_stack.py."""
     service = only(synth(), "AWS::ECS::Service")
     assert "DeploymentCircuitBreaker" not in service.get("DeploymentConfiguration", {})
@@ -536,7 +539,7 @@ def test_a_six_to_eight_fleet_synthesises_one_task_per_gpu_with_autoscaling_boun
     template = synth(instanceType="g7e.2xlarge", instanceCount=6, maxInstanceCount=8)
     asg = only(template, "AWS::AutoScaling::AutoScalingGroup")
     assert asg["MaxSize"] == "8" and "DesiredCapacity" not in asg
-    gpu = [r for r in only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["ResourceRequirements"]
+    gpu = [r for r in vllm_container(template)["ResourceRequirements"]
            if r["Type"] == "GPU"]
     assert gpu[0]["Value"] == "1"
     target = only(template, "AWS::ApplicationAutoScaling::ScalableTarget")
@@ -741,7 +744,7 @@ def test_draining_gives_an_in_flight_generation_time_to_finish():
              for a in only(template, "AWS::ElasticLoadBalancingV2::TargetGroup")
              .get("TargetGroupAttributes", [])}
     assert int(attrs["deregistration_delay.timeout_seconds"]) >= 120
-    container = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]
+    container = vllm_container(template)
     assert int(container["StopTimeout"]) >= 120
 
 
@@ -810,7 +813,7 @@ def test_a_padded_image_uri_does_not_reach_the_task_definition():
     `image: "  vllm/vllm-openai:v0.11  "` put the padding into the task definition and failed at task
     start."""
     template = synth(image="  vllm/vllm-openai:v0.11  ")
-    image = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Image"]
+    image = vllm_container(template)["Image"]
     assert image == "vllm/vllm-openai:v0.11", repr(image)
 
 
@@ -1199,7 +1202,7 @@ def test_config_edge_cases_are_config_errors_not_tracebacks():
     with pytest.raises(ConfigError, match="at most"):
         synth(estimatedParamsBillions=1e300)
     env = {e["Name"]: e["Value"] for e in
-           only(synth(quantization="  "), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
+           vllm_container(synth(quantization="  "))["Environment"]}
     assert "QUANTIZATION" not in env, "blank quantization means none, not a flag with spaces in it"
     # A YAML list is the natural spelling for extraArgs and str(list) sent vLLM `['--a',` and `1]`;
     # `quantization: false` shipped `--quantization False`.
