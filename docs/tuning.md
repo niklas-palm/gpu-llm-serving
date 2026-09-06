@@ -915,7 +915,7 @@ the multiplier, not the measured rate.
 #### Estimate it from traffic you already have, before deploying anything
 
 **If you know your average prompt length**: per-GPU input tokens/sec is roughly constant across prompt
-sizes (16,027 against 15,277 for a 4x difference in prompt length, table below). So:
+sizes (16,075 against 15,277 for a 4x difference in prompt length, table below). So:
 
 ```
 requests/sec per task  =  ~16,000  ÷  your average INPUT tokens per request
@@ -952,7 +952,7 @@ Measured on identical hardware:
 
 | Prompt size | Input tok/s per GPU | Requests/sec per GPU | Correct threshold |
 |---|---|---|---|
-| 1,000 tokens | 16,027 | 17.1 | **~925/min** |
+| 1,000 tokens | 16,075 | 17.1 | **~925/min** |
 | 4,000 tokens | 15,277 | 4.2 | **~225/min** |
 
 Same GPU work in both rows, packaged into a quarter as many requests, so the request threshold comes

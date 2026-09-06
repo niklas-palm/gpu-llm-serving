@@ -398,6 +398,7 @@ is a stack output:
 | `PurchaseModel` | `spot` or `on-demand`, as deployed |
 | `ApiKeyValue` | the key to send as `Authorization: Bearer <key>` |
 | `ModelName` | the model id to put in requests |
+| `DashboardUrl`, `DashboardName` | the CloudWatch dashboard |
 | `ClusterName`, `AsgName`, `LogGroup` | for the operational commands below |
 | `ResolvedTensorParallel`, `GpusPerReplica`, `ContainerMemoryMib` | what the derivation chose |
 

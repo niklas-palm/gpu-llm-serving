@@ -1008,7 +1008,7 @@ def test_a_supplied_topic_is_wired_to_every_alarm_and_no_topic_is_created():
     the silent one. And the topic is referenced, never created: a topic minted here would have no
     subscription, so it would look like a working notification while paging nobody.
 
-    (The one topic in the template is the ASG's own ECS drain hook, which is unrelated.)"""
+   """
     arn = "arn:aws:sns:us-west-2:111122223333:llm-alerts"
     template = synth(alarmTopicArn=arn)
     for name, alarm in alarms(template).items():
