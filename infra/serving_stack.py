@@ -627,14 +627,13 @@ service:
             environment={"AOT_CONFIG_CONTENT": collector_config},
             logging=ecs.LogDrivers.aws_logs(stream_prefix="metrics", log_group=log_group),
         )
-        # What the collector needs: to write metric records into this stack's log group, and for
-        # CloudWatch to accept them as metrics in this stack's namespace. Nothing wider.
+        # What the collector needs: to write embedded-metric-format records into this stack's log
+        # group. CloudWatch turns those records into metrics itself; no PutMetricData is involved, so
+        # none is granted. Eight tasks writing one log stream is fine: PutLogEvents has not required
+        # sequence tokens since 2023.
         task_def.add_to_task_role_policy(iam.PolicyStatement(
             actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"],
             resources=[log_group.log_group_arn, log_group.log_group_arn + ":*"]))
-        task_def.add_to_task_role_policy(iam.PolicyStatement(
-            actions=["cloudwatch:PutMetricData"], resources=["*"],
-            conditions={"StringEquals": {"cloudwatch:namespace": engine_metrics_namespace}}))
 
         service = ecs.Ec2Service(
             self, "Service",

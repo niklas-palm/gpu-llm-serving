@@ -1112,26 +1112,20 @@ def test_the_collector_writes_into_the_stack_log_group_not_one_of_its_own():
                 if r["Type"] == "AWS::Logs::LogGroup"]) == 1
 
 
-def test_the_task_role_may_write_metrics_only_into_this_namespace():
-    """PutMetricData has no resource ARN, so the namespace condition is the only scoping available -
-    without it the task could publish under any namespace in the account."""
+def test_the_task_role_writes_logs_only_and_has_no_putmetricdata():
+    """EMF records become metrics inside CloudWatch Logs; PutMetricData is never called. A grant for it
+    was dead permission and a misleading comment."""
     template = synth()
-    task_role = next(lid for lid, r in template["Resources"].items()
-                     if r["Type"] == "AWS::IAM::Role"
-                     and "ecs-tasks.amazonaws.com" in str(r["Properties"]["AssumeRolePolicyDocument"])
-                     and "TaskRole" in lid)
     statements = [st for r in template["Resources"].values() if r["Type"] == "AWS::IAM::Policy"
-                  and {"Ref": task_role} in r["Properties"]["Roles"]
                   for st in r["Properties"]["PolicyDocument"]["Statement"]]
-    put = [st for st in statements if st["Action"] == "cloudwatch:PutMetricData"]
-    assert len(put) == 1
-    assert put[0]["Condition"] == {"StringEquals": {"cloudwatch:namespace": "T/Engine"}}
-    log_writes = [st for st in statements
-                  if isinstance(st["Action"], list) and "logs:PutLogEvents" in st["Action"]]
-    assert log_writes, "the collector must be able to write EMF records"
-    for st in log_writes:
-        assert st["Resource"] != "*", "scoped to the stack's log group"
-        assert "Fn::GetAtt" in str(st["Resource"]), "a reference to the log group, not a literal"
+    assert not [st for st in statements if "cloudwatch:PutMetricData" in str(st["Action"])]
+    task_role = next(lid for lid, r in template["Resources"].items()
+                     if r["Type"] == "AWS::IAM::Role" and "TaskRole" in lid)
+    log_writes = [st for r in template["Resources"].values() if r["Type"] == "AWS::IAM::Policy"
+                  and {"Ref": task_role} in r["Properties"]["Roles"]
+                  for st in r["Properties"]["PolicyDocument"]["Statement"]
+                  if "logs:PutLogEvents" in str(st["Action"])]
+    assert log_writes and all(st["Resource"] != "*" for st in log_writes)
 
 
 def test_the_dashboard_shows_the_engine_row_from_the_same_namespace_the_collector_writes_to():
