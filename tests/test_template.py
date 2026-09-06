@@ -1201,6 +1201,12 @@ def test_config_edge_cases_are_config_errors_not_tracebacks():
     env = {e["Name"]: e["Value"] for e in
            only(synth(quantization="  "), "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["Environment"]}
     assert "QUANTIZATION" not in env, "blank quantization means none, not a flag with spaces in it"
+    # A YAML list is the natural spelling for extraArgs and str(list) sent vLLM `['--a',` and `1]`;
+    # `quantization: false` shipped `--quantization False`.
+    with pytest.raises(ConfigError, match="extraArgs must be a string"):
+        synth(extraArgs=["--data-parallel-size", "2"])
+    with pytest.raises(ConfigError, match="quantization must be a string"):
+        synth(quantization=False)
 
 
 def test_instance_draining_is_ecs_managed_with_no_lambda_hook():

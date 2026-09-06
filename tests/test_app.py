@@ -89,3 +89,14 @@ def test_missing_serving_image_is_rejected_at_synth(tmp_path):
     assert "build_image.py" in out, f"and how to produce one:\n{out}"
 
 
+
+
+def test_a_whitespace_only_required_value_is_missing(tmp_path, monkeypatch):
+    """`modelId: "  "` passed the required-values check, synthesised MODEL_ID="" and the task died
+    after a full deploy with 'MODEL_ID is required'."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text('region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: "   "\napiKey: some-stable-key-1234\n')
+    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
+    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
+    with pytest.raises(app.ConfigError, match="missing required values: modelId"):
+        app.load_config()

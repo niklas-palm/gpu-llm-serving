@@ -141,7 +141,7 @@ def load_config() -> dict:
 
     cfg = _apply_env(cfg)
 
-    missing = [k for k in REQUIRED if not cfg.get(k)]
+    missing = [k for k in REQUIRED if not str(cfg.get(k) or "").strip()]
     if missing:
         raise ConfigError(
             "config.yaml is missing required values: " + ", ".join(missing)

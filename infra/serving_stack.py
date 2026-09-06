@@ -100,7 +100,13 @@ class ServingStack(Stack):
         # alone doubles the estimated weight size and misreads a correct configuration.
         # Stripped once, here, so a padded or non-string value cannot reach the task definition as-is:
         # `quantization: "  "` shipped `--quantization "  "` while the size estimate treated it as bf16.
-        cfg["modelId"] = str(cfg["modelId"]).strip()
+        for key in ("modelId", "quantization", "extraArgs"):
+            if cfg.get(key) is not None and not isinstance(cfg[key], str):
+                raise ConfigError(
+                    f"{key} must be a string (got {type(cfg[key]).__name__}: {cfg[key]!r}).\n"
+                    "  extraArgs is one line, quoted like a shell command, not a YAML list."
+                )
+        cfg["modelId"] = cfg["modelId"].strip()
         cfg["quantization"] = str(_given(cfg.get("quantization"), "")).strip()
         bytes_per_param = bytes_per_param_for(cfg["modelId"], cfg["quantization"])
         est_weight_bytes = model_bytes(est_params_b, bytes_per_param)
