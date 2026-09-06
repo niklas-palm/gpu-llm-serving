@@ -57,3 +57,35 @@ def test_every_spelling_of_a_blank_key_is_replaced_not_duplicated(tmp_path, monk
 def test_the_local_config_is_not_world_readable(tmp_path, monkeypatch):
     _persist(tmp_path, monkeypatch, None)
     assert oct(os.stat(tmp_path / "config.local.yaml").st_mode & 0o777) == "0o600"
+
+
+def test_missing_serving_image_is_rejected_at_synth(tmp_path):
+    """The upstream engine image would deploy and then serve nothing: this project's Dockerfile
+    replaces the entrypoint with `serve`, which is what turns these env vars into
+    engine flags. A default would trade a one-second failure for a 20-minute one that looks like a
+    broken model.
+
+    Driven through the real entry point as a subprocess, because app.py synthesises on import.
+    """
+    import subprocess
+    import textwrap
+    root = os.path.join(HERE, "..")
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(textwrap.dedent("""
+        region: us-west-2
+        instanceType: g7e.2xlarge
+        modelId: some-org/some-model
+    """))
+
+    env = {**os.environ, "CONFIG": str(cfg), "CDK_DEFAULT_ACCOUNT": "111122223333"}
+    env.pop("SERVING_IMAGE", None)
+    r = subprocess.run([sys.executable, os.path.join(root, "infra", "app.py")],
+                       capture_output=True, text=True, env=env)
+
+    assert r.returncode != 0, "a config with no image must not synthesise"
+    out = r.stdout + r.stderr
+    assert "image" in out.lower(), f"the error must say what is missing:\n{out}"
+    assert "build_image.py" in out, f"and how to produce one:\n{out}"
+
+

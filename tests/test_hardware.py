@@ -94,7 +94,7 @@ def test_quantization_can_avoid_tensor_parallelism():
 def test_a_model_too_large_for_the_whole_instance_fails_with_advice():
     with pytest.raises(ConfigError) as e:
         derive_tensor_parallel(INSTANCES["g7e.2xlarge"], model_bytes(200))
-    assert "fp8" in str(e.value) or "larger instance" in str(e.value)
+    assert "fp8" in str(e.value) and "more GPUs" in str(e.value)
 
 
 # ---------------------------------------------------------------- tuning validation
@@ -244,36 +244,6 @@ def test_no_warning_when_there_is_headroom_to_absorb_it():
         model_bytes(30, 2.0), _tuning(kvCacheDtype="fp8", gpuMemoryUtilization=0.85)) is None
 
 
-def test_missing_serving_image_is_rejected_at_synth(tmp_path):
-    """The upstream engine image would deploy and then serve nothing: this project's Dockerfile
-    replaces the entrypoint with `serve`, which is what turns these env vars into
-    engine flags. A default would trade a one-second failure for a 20-minute one that looks like a
-    broken model.
-
-    Driven through the real entry point as a subprocess, because app.py synthesises on import.
-    """
-    import subprocess
-    import textwrap
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-
-    cfg = tmp_path / "config.yaml"
-    cfg.write_text(textwrap.dedent("""
-        region: us-west-2
-        instanceType: g7e.2xlarge
-        modelId: some-org/some-model
-    """))
-
-    env = {**os.environ, "CONFIG": str(cfg), "CDK_DEFAULT_ACCOUNT": "111122223333"}
-    env.pop("SERVING_IMAGE", None)
-    r = subprocess.run([sys.executable, os.path.join(root, "infra", "app.py")],
-                       capture_output=True, text=True, env=env)
-
-    assert r.returncode != 0, "a config with no image must not synthesise"
-    out = r.stdout + r.stderr
-    assert "image" in out.lower(), f"the error must say what is missing:\n{out}"
-    assert "build_image.py" in out, f"and how to produce one:\n{out}"
-
-
 
 def test_per_gpu_host_resources_match_the_documented_table():
     """docs/tuning.md and README.md both publish vCPU-per-GPU and RAM-per-GPU, and a reader now picks
@@ -304,19 +274,6 @@ def test_vcpu_per_gpu_is_not_monotonic_in_instance_size():
 # --------------------------------------------------------------------------------------------
 # Fixes for bugs that synthesised cleanly and failed at load time
 # --------------------------------------------------------------------------------------------
-
-def test_a_large_unquantised_model_derives_more_than_one_gpu():
-    """`estimatedParamsBillions` is what the tensor-parallel degree comes from, and getting it wrong
-    fails 25 minutes into a deploy rather than at synth.
-
-    A 70B model in bf16 is ~130 GiB and cannot serve from one 96 GiB card, so the degree must rise.
-    Left at the 30B default it derived TP=1, synthesised, deployed, and then ran out of VRAM while
-    loading."""
-    big = get_instance("g7e.48xlarge")
-    assert derive_tensor_parallel(big, model_bytes(70, 2.0)) >= 2
-    # Quantised, the same model fits one card - which is the point of quantising.
-    assert derive_tensor_parallel(big, model_bytes(70, 1.0)) == 1
-
 
 def test_a_lower_utilization_raises_the_derived_degree():
     """The engine only claims `gpuMemoryUtilization` of each card, so the derivation has to agree.

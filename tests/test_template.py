@@ -533,29 +533,17 @@ def test_a_single_availability_zone_is_rejected():
 # The two fleet shapes that must work from config alone
 # --------------------------------------------------------------------------------------------
 
-def test_the_recommended_fleet_is_six_small_instances_scaling_to_eight():
-    """The shipped default, and the shape about to be deployed: 6 x g7e.2xlarge at one engine per
-    GPU, autoscaling to 8. Six instances is 48 vCPU and eight is 64 - the default spot quota - so the
-    maximum is set by the quota rather than guessed."""
+def test_a_six_to_eight_fleet_synthesises_one_task_per_gpu_with_autoscaling_bounds():
+    """The shape used for testing: 6 x g7e.2xlarge scaling to 8, one engine per GPU. Bounds on the
+    scalable target are task counts, the ASG has no DesiredCapacity while autoscaling owns it."""
     template = synth(instanceType="g7e.2xlarge", instanceCount=6, maxInstanceCount=8)
-
     asg = only(template, "AWS::AutoScaling::AutoScalingGroup")
-    assert asg["MaxSize"] == "8"
-    # DesiredCapacity is absent while autoscaling is enabled - see
-    # test_autoscaling_owns_the_desired_counts_so_a_deploy_cannot_reset_them.
-    assert "DesiredCapacity" not in asg
-    target = [r for r in template["Resources"].values()
-              if r["Type"] == "AWS::ApplicationAutoScaling::ScalableTarget"][0]["Properties"]
-    assert int(target["MinCapacity"]) == 6, "one task per instance, one GPU each"
-
-    task_def = only(template, "AWS::ECS::TaskDefinition")
-    gpu = [r for r in task_def["ContainerDefinitions"][0]["ResourceRequirements"]
+    assert asg["MaxSize"] == "8" and "DesiredCapacity" not in asg
+    gpu = [r for r in only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["ResourceRequirements"]
            if r["Type"] == "GPU"]
     assert gpu[0]["Value"] == "1"
-
     target = only(template, "AWS::ApplicationAutoScaling::ScalableTarget")
-    assert target["MinCapacity"] == 6
-    assert target["MaxCapacity"] == 8
+    assert (target["MinCapacity"], target["MaxCapacity"]) == (6, 8)
 
 
 def test_the_largest_instance_runs_one_engine_per_gpu_without_being_told():
