@@ -878,9 +878,7 @@ The one-instance figure predicted the 6- and 8-instance fleets within ~3%
 
 **Autoscaling is ON in the shipped config**: `instanceCount: 16` with `maxInstanceCount: 24`, which
 creates target tracking on the load balancer's request count per target. Set the two equal (or leave
-`maxInstanceCount` unset) for a fixed-size fleet, and no scaling policy is created. While it is on,
-dropping the scalable target's floor is a mandatory first step when scaling to zero; see
-*Scale to zero* in README.md.
+`maxInstanceCount` unset) for a fixed-size fleet, and no scaling policy is created.
 
 Signals:
 

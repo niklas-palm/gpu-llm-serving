@@ -260,7 +260,7 @@ def _given(value: object, default: object) -> object:
     `cfg.get(key) or default` is the obvious form and it is wrong for anything countable, because 0 is
     falsy: an explicit zero was replaced by the default and never reached the range check that would
     have accepted or rejected it. `scalingRequestsPerTarget: 0` silently became 925, and
-    `maxInstanceCount: 0` silently became `instanceCount`, which made the deliberate "below
+    `maxInstanceCount: 0` silently became `instanceCount`, which made the "below
     instanceCount" error unreachable for the one value someone parking a fleet would write. The quoted
     forms were rejected all along, so the two disagreed.
 

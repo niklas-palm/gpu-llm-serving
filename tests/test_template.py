@@ -154,7 +154,6 @@ def test_gpu_ami_is_the_al2023_gpu_image_resolved_at_deploy_time(region):
             in defaults), f"expected the AL2023 GPU AMI parameter, got: {defaults}"
     assert "amazon-linux-2/" not in defaults, "Amazon Linux 2 cannot drive this GPU generation"
 
-    import json
     assert "ami-" not in json.dumps(template), "AMI must not be baked into the template"
 
 
@@ -316,9 +315,7 @@ def test_extra_args_reaches_the_container():
 
 
 def test_empty_extra_args_is_omitted_entirely():
-    """An empty string must not reach the container: `serve` appends EXTRA_ARGS unquoted, and the
-    shipped config sets it to "" - so if empty values were passed through, the default deployment
-    would depend on the entrypoint handling an empty expansion correctly."""
+    """An empty string must not reach the container as a variable at all."""
     task_def = only(synth(extraArgs=""), "AWS::ECS::TaskDefinition")
     env = {e["Name"]: e.get("Value")
            for e in task_def["ContainerDefinitions"][0]["Environment"]}
@@ -361,7 +358,7 @@ def test_the_asg_cannot_grow_past_the_configured_maximum():
 
 
 def test_an_autoscaling_fleet_has_a_declared_initial_size_but_no_resettable_instance_count():
-    """The two halves of this are a deliberate split, and both directions have bitten.
+    """The two halves of this are a split, and both directions have bitten.
 
     Declaring AutoScalingGroup.DesiredCapacity meant any later `cdk deploy` pulled a scaled-out fleet
     back to the configured minimum, TERMINATING instances whose tasks the policy still wanted and
@@ -563,7 +560,7 @@ def test_the_largest_instance_runs_one_engine_per_gpu_without_being_told():
 
 
 def test_replicas_default_to_the_instance_gpu_count():
-    from hardware import get_instance, resolve_topology, validate_tuning, model_bytes
+    from hardware import get_instance, resolve_topology, model_bytes
     for name, expected in [("g7e.2xlarge", 1), ("g7e.12xlarge", 2), ("g7e.48xlarge", 8)]:
         inst = get_instance(name)
         t = resolve_topology(inst, {}, model_bytes(30, 1.0))
@@ -652,22 +649,6 @@ def test_an_unquantised_model_with_an_fp8_cache_still_warns(capsys):
     synth(modelId="Qwen/Qwen3-30B-A3B-Instruct-2507", quantization="",
           tuning={"kvCacheDtype": "fp8"})
     assert "unquantised weights" in capsys.readouterr().err
-
-
-# --------------------------------------------------------------------------------------------
-# The API key. Two independent random values used to be generated, so the value stored in Secrets
-# Manager was NOT the value the load balancer enforced - retrieving the key the documented way
-# locked you out.
-# --------------------------------------------------------------------------------------------
-
-def _enforced_key(template: dict) -> str:
-    rules = [r["Properties"] for r in template["Resources"].values()
-             if r["Type"] == "AWS::ElasticLoadBalancingV2::ListenerRule"]
-    assert len(rules) == 1
-    for cond in rules[0]["Conditions"]:
-        if cond.get("Field") == "http-header":
-            return cond["HttpHeaderConfig"]["Values"][0].removeprefix("Bearer ")
-    raise AssertionError("no http-header condition on the listener rule")
 
 
 def test_the_stack_refuses_to_invent_a_key():
@@ -874,7 +855,7 @@ def test_a_zero_scaling_target_is_rejected_rather_than_defaulted():
 
 
 def test_a_zero_ceiling_below_a_nonzero_floor_is_rejected():
-    """`or instance_count` swallowed it, making the deliberate "below instanceCount" error unreachable
+    """`or instance_count` swallowed it, making the "below instanceCount" error unreachable
     for exactly the value someone parking a fleet reaches for first."""
     with pytest.raises(ConfigError):
         synth(instanceCount=2, maxInstanceCount=0)
@@ -1013,9 +994,7 @@ def test_a_supplied_topic_is_wired_to_every_alarm_and_no_topic_is_created():
     template = synth(alarmTopicArn=arn)
     for name, alarm in alarms(template).items():
         assert alarm["AlarmActions"] == [arn], name
-    topics = [r for r in template["Resources"].values() if r["Type"] == "AWS::SNS::Topic"]
-    assert len(topics) == len([r for r in synth()["Resources"].values()
-                               if r["Type"] == "AWS::SNS::Topic"])
+    assert not [r for r in template["Resources"].values() if r["Type"] == "AWS::SNS::Topic"]
 
 
 @pytest.mark.parametrize("bad", ["llm-alerts", "arn:aws:sqs:us-west-2:111122223333:q",

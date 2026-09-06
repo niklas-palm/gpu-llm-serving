@@ -123,9 +123,7 @@ aws cloudformation wait stack-update-rollback-complete \
   --stack-name GpuLlmServing --region "$REGION"
 ```
 
-**Avoiding it: do not change ASG capacity or `instanceType` while a deploy is in flight.** Scale to
-zero before a deploy or after it finishes. The README.md scale-to-zero procedure deadlocks a stack
-mid-update.
+**Avoiding it: do not change ASG capacity or `instanceType` while a deploy is in flight.**
 
 ---
 

@@ -44,8 +44,7 @@ from constructs import Construct
 
 from hardware import (ROOT_VOLUME_GIB, ROOT_VOLUME_IOPS, ROOT_VOLUME_THROUGHPUT_MBPS,
                       ConfigError, _flag, _given, _list, _num, bytes_per_param_for, get_instance,
-                      memory_pressure_warning, model_bytes, resolve_topology,
-                      validate_tuning)
+                      memory_pressure_warning, model_bytes, resolve_topology)
 
 CONTAINER_PORT = 8080
 
@@ -276,8 +275,7 @@ class ServingStack(Stack):
                 "  maxInstanceCount is the autoscaling CEILING, so it has to be at least the floor.\n"
                 "  Set them equal for a fixed-size fleet, or raise it to allow scale-out."
             )
-        max_instances = configured_max
-        autoscaling_enabled = max_instances > instance_count
+        autoscaling_enabled = configured_max > instance_count
 
         asg = autoscaling.AutoScalingGroup(
             self, "GpuAsg",
@@ -299,9 +297,8 @@ class ServingStack(Stack):
             # instances that still hold tasks and tens of GiB of loaded weights.
             #
             # `instanceCount` is documented as the minimum, so a floor is also what it should mean.
-            # Scale-to-zero is a deliberate manual operation that lowers MinSize explicitly.
             min_capacity=instance_count,
-            max_capacity=max_instances,
+            max_capacity=configured_max,
             # Declared only when nothing else manages the fleet, so a hand-scaled ASG returns to the
             # configured size on the next deploy. (CDK warns about that reset; it is the intent.)
             **({} if autoscaling_enabled else {"desired_capacity": instance_count}),
@@ -352,7 +349,7 @@ class ServingStack(Stack):
         capacity_provider = ecs.AsgCapacityProvider(
             self, "GpuCapacity", auto_scaling_group=asg,
             # Left OFF. Enabled, it stops the ASG terminating an instance that still has
-            # tasks - which also means a deliberate scale to zero waits on it. The measured ~3 minute
+            # tasks - which also means a scale to zero waits on it. The measured ~3 minute
             # teardown depends on this being off.
             enable_managed_termination_protection=False,
             # ECS drains the instance itself when the ASG terminates it. Without this CDK adds its own
@@ -364,17 +361,14 @@ class ServingStack(Stack):
 
         # ------------------------------------------------------------------ API key
         #
-        # ONE value, for the listener rule and the stored copy alike - two values here would mean
-        # retrieving the key the documented way locked you out.
-        #
         # It must come from config rather than being generated here, because this runs at SYNTH time:
         # a fresh value would be a NEW key on every `cdk deploy`. app.py generates one once and
         # persists it to config.local.yaml so redeploys are stable.
         #
         # BE CLEAR ABOUT WHAT THIS IS. An ALB listener rule is evaluated by the load balancer, which
         # cannot resolve a Secrets Manager reference, so the condition needs a LITERAL. The key
-        # therefore appears in the template, the stack outputs and the stored secret alike - it is not
-        # confidential from anyone who can read the stack. A lightweight gate that keeps unauthenticated
+        # therefore appears in the template and the stack outputs - it is not confidential from anyone
+        # who can read the stack. A lightweight gate that keeps unauthenticated
         # traffic off the model, and NOT an authorization layer. README.md has the upgrade path.
         key_value = str(cfg.get("apiKey") or "").strip()
         if not key_value:
@@ -675,7 +669,7 @@ service:
             # With awsvpc each task gets its own ENI and IP address, so replicas can all bind the
             # same container port on one instance and the ALB round-robins across them.
             #
-            # ALWAYS declared, including with autoscaling on, and that is a deliberate trade.
+            # ALWAYS declared, including with autoscaling on, and that is a trade.
             #
             # Omitting it means CloudFormation omits DesiredCount, and ECS then defaults a new service
             # to ONE task - so a first deploy would serve from a single task on a full fleet of
@@ -724,7 +718,7 @@ service:
                 # Bounds are TASK counts, so both are multiplied by replicas-per-instance. Using
                 # instance counts directly would cap a multi-engine fleet at a fraction of its tasks.
                 min_capacity=tasks,
-                max_capacity=max_instances * tuning["replicas"],
+                max_capacity=configured_max * tuning["replicas"],
             )
             scaling.scale_on_request_count(
                 "RequestsPerTarget",
@@ -887,10 +881,9 @@ service:
             ),
         )
 
-        # Two alarms, plus an optional latency one. More would mostly restate
-        # these, and an alarm nobody trusts is worse than no alarm - an earlier round of work on this
-        # project lost real time to a check that
-        # cried wolf on every normal model swap.
+        # Two alarms, plus an optional latency one. More would mostly restate these, and an alarm
+        # nobody trusts is worse than no alarm: an earlier round of work on this project lost real time
+        # to a check that cried wolf on every normal model swap.
         #
         # No SNS topic is created here, because a topic with no subscription notifies nobody while
         # looking like it does. Supply `alarmTopicArn` and the alarms notify it; leave it out and they
