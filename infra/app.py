@@ -93,7 +93,7 @@ def _persist_generated_api_key() -> str:
         # two keys, and the file only worked because PyYAML takes the last.
         def _blank_key_line(line: str) -> bool:
             code = line.split("#", 1)[0].strip()
-            return code.startswith("apiKey:") and _blank(yaml.safe_load(code.split(":", 1)[1] or "null"))
+            return code.startswith("apiKey:") and _blank(yaml.safe_load(code.split(":", 1)[1]))
 
         if exists and any(_blank_key_line(line) for line in body.splitlines()):
             lines = [f"apiKey: {key}" if _blank_key_line(line) else line for line in body.splitlines()]

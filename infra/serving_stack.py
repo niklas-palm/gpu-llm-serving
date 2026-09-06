@@ -79,9 +79,9 @@ class ServingStack(Stack):
         super().__init__(scope, cid, **kw)
 
         inst = get_instance(cfg["instanceType"])
-        # Resolved ONCE, before anything reads it. It is used in three places, and as a bare
-        # cfg.get("useSpot") a quoted "false" from YAML was truthy at every one of them - silently
-        # turning spot ON for someone who had written it off.
+        # Resolved ONCE, before anything reads it. As a bare cfg.get("useSpot") a quoted "false" from
+        # YAML was truthy everywhere it was read - silently turning spot ON for someone who had
+        # written it off.
         use_spot = _flag(cfg.get("useSpot"), "useSpot")
 
         # The model's parameter count is not knowable at synth time without a network call, so it is
@@ -107,7 +107,7 @@ class ServingStack(Stack):
                     "  extraArgs is one line, quoted like a shell command, not a YAML list."
                 )
         cfg["modelId"] = cfg["modelId"].strip()
-        cfg["quantization"] = str(_given(cfg.get("quantization"), "")).strip()
+        cfg["quantization"] = _given(cfg.get("quantization"), "").strip()
         bytes_per_param = bytes_per_param_for(cfg["modelId"], cfg["quantization"])
         est_weight_bytes = model_bytes(est_params_b, bytes_per_param)
 
@@ -341,8 +341,6 @@ class ServingStack(Stack):
             # Start replacing an instance on the rebalance recommendation, which arrives BEFORE the
             # two-minute reclaim notice, so the replacement has a head start on loading weights.
             cfn_asg.add_property_override("CapacityRebalance", True)
-            # Draining is enabled through the launch template's user data (see `gpu_user_data`),
-            # because with an externally supplied launch template the ASG does not own user data.
 
         capacity_provider = ecs.AsgCapacityProvider(
             self, "GpuCapacity", auto_scaling_group=asg,
@@ -559,7 +557,7 @@ class ServingStack(Stack):
         # this there was nowhere to actually put it. Unvalidated by design: anything here bypasses the
         # checks in validate_tuning, which is the point, and the risk.
         if cfg.get("extraArgs"):
-            env["EXTRA_ARGS"] = str(cfg["extraArgs"])
+            env["EXTRA_ARGS"] = cfg["extraArgs"]
 
         container = task_def.add_container(
             "vllm",
