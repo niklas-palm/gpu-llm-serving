@@ -6,7 +6,6 @@
 set -euo pipefail
 
 PORT="${PORT:-8080}"
-MODEL_PATH="${MODEL_ID:?MODEL_ID is required}"
 
 # /opt/model is a HOST directory shared by every task on this instance (see the task definition), so
 # one copy of the weights is reused across restarts and across replicas. That is what stops a
@@ -23,12 +22,10 @@ export HUGGINGFACE_HUB_CACHE="${HF_HOME}/hub"
 mkdir -p "${HUGGINGFACE_HUB_CACHE}"
 
 ARGS=(
-  --model "${MODEL_PATH}"
+  # Also the served model name: /v1/models reports it and gateways route by it.
+  --model "${MODEL_ID:?MODEL_ID is required}"
   --host 0.0.0.0
   --port "${PORT}"
-  # Served under the repo id, so /v1/models says what is deployed and gateways route by the real name.
-  # With S3 weights the local path would otherwise become the name.
-  --served-model-name "${MODEL_ID}"
   --tensor-parallel-size "${TENSOR_PARALLEL:-1}"
   --max-num-seqs "${MAX_NUM_SEQS:-256}"
   --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.95}"
