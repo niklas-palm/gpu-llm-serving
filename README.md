@@ -652,8 +652,9 @@ Two caveats: **p99 leaves the budget long before p95** (13.10 s at 1024 concurre
 
 **Not measured**, so treat as estimates: tensor parallelism above 2 (four- and eight-GPU instances were
 not obtainable); autoscaling timings on fleets other than 6 → 8; output quality of any quantisation
-(every figure here is throughput); any model other than `Qwen/Qwen3-30B-A3B-Instruct-2507`, on which all
-of the above was run.
+(every figure here is throughput); prompts longer than 4,000 tokens, and mixing long and short requests
+on one engine; any model other than `Qwen/Qwen3-30B-A3B-Instruct-2507`, on which all of the above was
+run.
 
 ---
 

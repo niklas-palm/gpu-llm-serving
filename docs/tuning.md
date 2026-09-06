@@ -490,7 +490,11 @@ If host contention bites at 8 engines, the fix is fewer, wider engines: 4 × TP=
 
 ## Engine tuning
 
-### `gpuMemoryUtilization: 0.95`: the biggest single effect
+### `gpuMemoryUtilization: 0.95`: the biggest single effect for a model that fills the card
+
+The +27% below is for a model occupying most of the card, where the last 5% is a large share of what
+remains for the KV cache. For a model that leaves tens of GiB free, the same 5% is a few percent of the
+cache and this setting is not a lever.
 
 Not the engine's 0.90 default. The KV cache is whatever remains after the weights; on a model that
 fills most of the card, the 5% of VRAM that 0.90 leaves unclaimed can be larger than the entire KV
@@ -560,13 +564,20 @@ Set it only to **reject** requests longer than some limit. Not to go faster.
 
 ### `maxNumSeqs: 256`
 
-Ceiling on concurrent sequences. A ceiling, not a reservation: raising it costs almost nothing and
-reserves no memory; too low leaves the GPU idle.
+Ceiling on concurrent sequences. A ceiling, not a reservation: it reserves no memory; too low leaves
+the GPU idle.
 
-128 → 256 measured **+1.4%**; 256 → 512 was noise.
+128 → 256 measured **+1.4%**; 256 → 512 was noise. Both on 1,000-token prompts.
 
 **Keep it well above the concurrency you load-test at**, or you are measuring this flag, not the
 hardware: requests past it queue instead of batching.
+
+**With long prompts the cap has to come from the KV cache, not from this flag.** The cache holds a fixed
+number of tokens: on this GPU with FP8 weights and an fp8 cache, about 63 GiB ÷ 48 KiB per token ≈
+1.3 million tokens. 256 sequences of 1,200 tokens fit ten times over; 256 sequences of 12,000 tokens do
+not, and the engine preempts rather than refuse. Derive the cap for your longest common request:
+`cache tokens ÷ (input + output tokens)`, and set `maxNumSeqs` at or below it. The dashboard's KV cache
+and preemption widgets show when this is the limit.
 
 ### `maxNumBatchedTokens: 0` (engine default)
 
