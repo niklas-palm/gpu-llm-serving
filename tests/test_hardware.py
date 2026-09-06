@@ -481,3 +481,11 @@ def test_nf4_is_sized_as_four_bit():
     """nf4 was in the quantised markers but not the 4-bit ones, so an NF4 checkpoint was sized at
     1 byte per parameter: the 2x over-estimate that derives TP=2 for a model that fits one GPU."""
     assert bytes_per_param_for("org/Model-NF4", "") == 0.5
+
+
+def test_the_recommended_nvfp4_checkpoint_counts_as_quantised():
+    """The 4-bit markers knew fp4 but the quantised markers did not, so the NVFP4 build the README
+    recommends was sized at half a byte per parameter and still reported as unquantised."""
+    from hardware import weights_are_quantised
+    assert weights_are_quantised("nvidia/Qwen3-30B-A3B-NVFP4", "")
+    assert bytes_per_param_for("nvidia/Qwen3-30B-A3B-NVFP4", "") == 0.5

@@ -136,8 +136,8 @@ def model_bytes(params_billions: float, bytes_per_param: float = 2.0) -> int:
 
 # Markers that a checkpoint is ALREADY quantised, so `quantization` is correctly left empty.
 # Case-insensitive substring match on the model id.
-QUANTISED_MODEL_MARKERS = ("fp8", "awq", "gptq", "int4", "int8", "w8a8", "w4a16",
-                           "-4bit", "-8bit", "4bit", "8bit", "nf4", "bnb")
+FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "fp4", "nf4", "4bit", "4-bit")   # fp4 covers nvfp4
+QUANTISED_MODEL_MARKERS = FOUR_BIT_MARKERS + ("fp8", "int8", "w8a8", "8bit", "bnb")
 
 
 def weights_are_quantised(model_id: str, quantization: str | None) -> bool:
@@ -161,9 +161,6 @@ def weights_are_quantised(model_id: str, quantization: str | None) -> bool:
         return True
     name = str(model_id or "").lower()
     return any(marker in name for marker in QUANTISED_MODEL_MARKERS)
-
-
-FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "nvfp4", "fp4", "nf4", "4bit", "4-bit")
 
 
 def bytes_per_param_for(model_id: str, quantization: str | None) -> float:
@@ -371,9 +368,7 @@ def _flag(value: object, key: str) -> bool:
     Anything not recognisable is rejected rather than guessed, because a silently-wrong boolean is
     exactly the failure this exists to stop.
     """
-    if value is None or isinstance(value, bool):
-        return bool(value)
-    if isinstance(value, (int, float)):
+    if value is None or isinstance(value, (int, float)):   # bool is an int
         return bool(value)
     text = str(value).strip().lower()
     if text in _TRUE:
@@ -395,7 +390,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     t = {**DEFAULT_TUNING,
          **{k: v for k, v in _mapping(tuning, "tuning").items() if v is not None}}
 
-    util = _num(t.get("gpuMemoryUtilization", 0.95), "gpuMemoryUtilization", float)
+    util = _num(t["gpuMemoryUtilization"], "gpuMemoryUtilization", float)
     if not 0.50 <= util <= 0.97:
         raise ConfigError(
             f"gpuMemoryUtilization must be between 0.50 and 0.97 (got {util}).\n"
@@ -405,7 +400,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         )
     t["gpuMemoryUtilization"] = util
 
-    tp = _num(t.get("tensorParallel") or 0, "tensorParallel")
+    tp = _num(_given(t["tensorParallel"], 0), "tensorParallel")
     if tp and tp not in (1, 2, 4, 8):
         raise ConfigError(f"tensorParallel must be 1, 2, 4 or 8 (got {tp}).")
     # Written back, like every other coerced value. Left unwritten, `tensorParallel: "2"` from YAML
@@ -419,7 +414,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
 
     # 0 means "derive": one engine per GPU. Resolved by resolve_topology once the tensor-parallel
     # degree is known, since the two are linked - replicas x tensorParallel must equal the GPU count.
-    replicas = _num(t.get("replicas") or 0, "replicas")
+    replicas = _num(_given(t["replicas"], 0), "replicas")
     if replicas < 0:
         raise ConfigError("replicas must be 0 (one engine per GPU) or a positive integer.")
     if tp and replicas and replicas * tp > inst.gpus:
@@ -437,7 +432,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         t[key] = _num(t[key], key, minimum=0)
     t["maxNumSeqs"] = _num(t["maxNumSeqs"], "maxNumSeqs", minimum=1)
 
-    kv = str(_given(t.get("kvCacheDtype"), DEFAULT_TUNING["kvCacheDtype"]))
+    kv = str(_given(t["kvCacheDtype"], DEFAULT_TUNING["kvCacheDtype"]))
     if kv not in KV_CACHE_DTYPES:
         raise ConfigError(
             f"kvCacheDtype must be one of {', '.join(KV_CACHE_DTYPES)} (got {kv})."
@@ -445,7 +440,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     t["kvCacheDtype"] = kv
 
     for flag in ("enablePrefixCaching", "enableExpertParallel", "enforceEager"):
-        t[flag] = _flag(t.get(flag), flag)
+        t[flag] = _flag(t.get(flag), flag)   # enforceEager has no default entry
 
     if t["enforceEager"]:
         raise ConfigError(
@@ -487,8 +482,7 @@ def resolve_topology(inst: Instance, tuning: dict, weight_bytes: int) -> dict:
             # The engine will only claim this much of each card, so the derivation has to agree with
             # it - otherwise lowering the utilisation leaves a model "fitting" a budget vLLM never
             # asks for.
-            gpu_memory_utilization=float(t.get("gpuMemoryUtilization",
-                                               DEFAULT_TUNING["gpuMemoryUtilization"])))
+            gpu_memory_utilization=t["gpuMemoryUtilization"])
     if not t.get("replicas"):
         t["replicas"] = max(1, inst.gpus // t["tensorParallel"])
     # Re-validate: a derived pair still has to satisfy replicas x tp <= gpus, and an explicit
