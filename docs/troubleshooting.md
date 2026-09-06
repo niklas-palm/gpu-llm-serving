@@ -67,6 +67,18 @@ cd infra && cdk bootstrap && cd ..
 
 ---
 
+## Symptom: `cdk destroy` fails with `delete is not allowed for this vpc origin`
+
+You destroyed a stack whose CloudFront VPC origin was still being created. CloudFront refuses to delete a
+VPC origin until it reaches `Deployed`, which takes a few minutes after the ALB exists, and the stack
+lands in `DELETE_FAILED`. Wait for it, then destroy again; the retry picks up where it stopped.
+
+```bash
+aws cloudfront list-vpc-origins --query 'VpcOriginList.Items[].[Name,Status]' --output text
+```
+
+---
+
 ## Symptom: `stack is in UPDATE_IN_PROGRESS and can not be updated`
 
 Every `cdk deploy` is rejected and the stack has been `UPDATE_IN_PROGRESS` far longer than a deploy
