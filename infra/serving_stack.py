@@ -57,6 +57,7 @@ CLOUDFRONT_READ_TIMEOUT_S = 120
 # Where the container keeps downloaded weights, and the host directory backing it. Must match the
 # path used by container/serve.
 CONTAINER_MODEL_PATH = "/opt/model"
+HOST_MODEL_CACHE = "/opt/modelcache"
 
 # The metrics sidecar: the AWS Distro for OpenTelemetry collector, run unmodified from the public
 # image with its configuration passed inline. Pinned, because a floating tag would change what the
@@ -72,7 +73,6 @@ ENGINE_METRICS = (
     "vllm:kv_cache_usage_perc",    # 0..1; near 1 means preemption is next
     "vllm:num_preemptions_total",  # counter; anything above zero is the engine going backwards
 )
-HOST_MODEL_CACHE = "/opt/modelcache"
 
 
 class ServingStack(Stack):
@@ -103,7 +103,7 @@ class ServingStack(Stack):
         # Resolve tensorParallel and replicas together - they are one decision about how the
         # instance's GPUs are divided into engines, and the default is one engine per GPU so that a
         # multi-GPU instance uses all of them without the user computing anything.
-        tuning = resolve_topology(inst, validate_tuning(inst, cfg.get("tuning")),
+        tuning = resolve_topology(inst, cfg.get("tuning"),
                                   est_weight_bytes)
 
         # Print the assumption, on stderr, because a silent wrong estimate is the failure above.
@@ -349,9 +349,6 @@ class ServingStack(Stack):
             # teardown depends on this being off.
             enable_managed_termination_protection=False,
         )
-        # Spot draining is enabled through the launch template's user data rather than the construct's
-        # `spot_instance_draining`: the construct applies that only when the ASG has a `spotPrice`, and a
-        # mixed-instances policy sets none, so it does nothing here. See `gpu_user_data` above.
         cluster.add_asg_capacity_provider(capacity_provider)
 
         # ------------------------------------------------------------------ API key
@@ -655,6 +652,7 @@ service:
             actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"],
             resources=[log_group.log_group_arn, log_group.log_group_arn + ":*"]))
 
+        tasks = instance_count * tuning["replicas"]
         service = ecs.Ec2Service(
             self, "Service",
             cluster=cluster,
@@ -677,7 +675,7 @@ service:
             # provider notices the surplus and scales in about 15 minutes later, and the warm
             # /opt/modelcache on those instances goes with them. Still the milder half of the problem it
             # replaces, where the deploy terminated instances immediately and mid-request.
-            desired_count=instance_count * tuning["replicas"],
+            desired_count=tasks,
             capacity_provider_strategies=[
                 ecs.CapacityProviderStrategy(capacity_provider=capacity_provider.capacity_provider_name,
                                              weight=1)],
@@ -695,25 +693,11 @@ service:
 
         # ------------------------------------------------------------------ autoscaling
         #
-        # Created only when maxInstanceCount exceeds instanceCount. The shipped config does exceed it
-        # (16 -> 24), so autoscaling is ON by default; set them equal for a fixed-size fleet.
-        #
-        # Either way it is burst absorption, NOT right-sizing: a new task loads tens of GiB of weights,
-        # so it is minutes from scale-out decision to serving traffic. Nothing that slow can protect a
-        # seconds-scale latency budget, and a fleet sized on the assumption that it can will breach the
-        # budget for the whole cold start. The minimum has to cover steady state with headroom.
-        #
-        # RequestCountPerTarget rather than GPU utilisation (which sits near 100% while latency is
-        # still fine, so it carries no SLA information) or response-time p95 (direct but lagging - it
-        # only rises once requests are already slow). Request count leads both and needs no custom
-        # metric. Engine queue depth would be better still, but must be published first.
-        #
-        # The THRESHOLD is workload-specific and the default will be wrong for many callers: request
-        # rate scales inversely with prompt length, so a fleet on 4x longer prompts needs roughly a
-        # quarter of it or never scales at all. config.yaml shows the derivation.
-        # None when there is no scaling policy, so the dashboard knows not to draw a threshold line
-        # for a threshold that does not exist. Resolved inside the branch, not before it, so a fleet
-        # with autoscaling off is not newly rejected for a value nothing reads.
+        # Only when maxInstanceCount exceeds instanceCount (the shipped 16 -> 24 does). Burst absorption,
+        # not right-sizing: a new task is minutes from decision to serving, so the minimum must cover
+        # steady state. Scales on RequestCountPerTarget, which leads latency and needs no custom metric;
+        # the threshold is workload-specific and config.yaml shows the derivation.
+        # requests_per_target stays None without a policy, so the dashboard draws no threshold line.
         requests_per_target = None
         if autoscaling_enabled:
             requests_per_target = _num(_given(cfg.get("scalingRequestsPerTarget"), 925),
@@ -724,7 +708,7 @@ service:
             scaling = service.auto_scale_task_count(
                 # Bounds are TASK counts, so both are multiplied by replicas-per-instance. Using
                 # instance counts directly would cap a multi-engine fleet at a fraction of its tasks.
-                min_capacity=instance_count * tuning["replicas"],
+                min_capacity=tasks,
                 max_capacity=max_instances * tuning["replicas"],
             )
             scaling.scale_on_request_count(
@@ -772,7 +756,6 @@ service:
         # stack actually needs you to read.
         tg_metrics, alb_metrics = target_group.metrics, alb.metrics
         minute = Duration.minutes(1)
-        tasks = instance_count * tuning["replicas"]
 
         def response_time(percentile: str, **kw) -> cloudwatch.Metric:
             return tg_metrics.target_response_time(statistic=percentile, period=minute, **kw)
@@ -890,7 +873,8 @@ service:
         )
 
         # Two alarms, plus an optional latency one. More would mostly restate
-        # these, and an alarm nobody trusts is worse than no alarm - an earlier round of work on this project lost real time to a check that
+        # these, and an alarm nobody trusts is worse than no alarm - an earlier round of work on this
+        # project lost real time to a check that
         # cried wolf on every normal model swap.
         #
         # No SNS topic is created here, because a topic with no subscription notifies nobody while

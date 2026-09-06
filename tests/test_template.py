@@ -576,7 +576,7 @@ def test_replicas_default_to_the_instance_gpu_count():
     from hardware import get_instance, resolve_topology, validate_tuning, model_bytes
     for name, expected in [("g7e.2xlarge", 1), ("g7e.12xlarge", 2), ("g7e.48xlarge", 8)]:
         inst = get_instance(name)
-        t = resolve_topology(inst, validate_tuning(inst, {}), model_bytes(30, 1.0))
+        t = resolve_topology(inst, {}, model_bytes(30, 1.0))
         assert t["replicas"] == expected, name
         assert t["tensorParallel"] == 1, name
 
