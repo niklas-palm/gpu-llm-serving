@@ -163,7 +163,7 @@ def weights_are_quantised(model_id: str, quantization: str | None) -> bool:
     return any(marker in name for marker in QUANTISED_MODEL_MARKERS)
 
 
-FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "nvfp4", "fp4", "4bit", "4-bit")
+FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "nvfp4", "fp4", "nf4", "4bit", "4-bit")
 
 
 def bytes_per_param_for(model_id: str, quantization: str | None) -> float:
@@ -437,7 +437,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         t[key] = _num(t[key], key, minimum=0)
     t["maxNumSeqs"] = _num(t["maxNumSeqs"], "maxNumSeqs", minimum=1)
 
-    kv = str(t.get("kvCacheDtype") or "auto")
+    kv = str(_given(t.get("kvCacheDtype"), DEFAULT_TUNING["kvCacheDtype"]))
     if kv not in KV_CACHE_DTYPES:
         raise ConfigError(
             f"kvCacheDtype must be one of {', '.join(KV_CACHE_DTYPES)} (got {kv})."

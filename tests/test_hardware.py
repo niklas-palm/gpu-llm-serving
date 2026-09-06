@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "infra"))
 
-from hardware import (ConfigError, DEFAULT_TUNING, INSTANCES, _given, _mapping, _num,
+from hardware import (ConfigError, bytes_per_param_for, DEFAULT_TUNING, INSTANCES, _given, _mapping, _num,
                       decode_ceiling_tokens_per_sec, derive_tensor_parallel, get_instance,
                       memory_pressure_warning, model_bytes, resolve_topology,
                       validate_tuning)
@@ -202,10 +202,12 @@ def test_kv_cache_dtype_is_checked_against_what_the_engine_accepts():
 
 @pytest.mark.parametrize("given", ["auto", "", None])
 def test_unquantised_kv_cache_is_a_supported_path(given):
-    """A reader who cannot accept a lossy store for attention state must have a path that works, and
-    an empty or omitted value must mean 'the model's own precision' rather than an error."""
+    """A reader who cannot accept a lossy store for attention state must have a path that works
+    ("auto"), and a blank or omitted value must mean the default rather than an error."""
     t = validate_tuning(get_instance("g7e.2xlarge"), {"kvCacheDtype": given})
-    assert t["kvCacheDtype"] == ("fp8" if given is None else "auto")
+    # Blank (absent, `kvCacheDtype:` or `kvCacheDtype: ""`) means the default, like every other key.
+    # "" used to resolve to auto while None resolved to fp8.
+    assert t["kvCacheDtype"] == ("auto" if given == "auto" else "fp8")
 
 
 def test_expert_parallelism_ships_off():
@@ -473,3 +475,9 @@ def test_bytes_per_parameter_follows_the_quantisation_width(model_id, quantizati
     fits one GPU."""
     from hardware import bytes_per_param_for
     assert bytes_per_param_for(model_id, quantization) == expected
+
+
+def test_nf4_is_sized_as_four_bit():
+    """nf4 was in the quantised markers but not the 4-bit ones, so an NF4 checkpoint was sized at
+    1 byte per parameter: the 2x over-estimate that derives TP=2 for a model that fits one GPU."""
+    assert bytes_per_param_for("org/Model-NF4", "") == 0.5
