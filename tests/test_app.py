@@ -100,3 +100,14 @@ def test_a_whitespace_only_required_value_is_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
     with pytest.raises(app.ConfigError, match="missing required values: modelId"):
         app.load_config()
+
+
+def test_a_non_string_apikey_is_not_treated_as_blank(tmp_path, monkeypatch):
+    """load_config called `apiKey: 0` blank and generated a key, but the line-replacer did not, so the
+    file got a second apiKey line. One predicate now: 0 is a value, and synth rejects it."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text("region: us-east-2\ninstanceType: g7e.2xlarge\nmodelId: org/m\napiKey: 0\nimage: x\n")
+    monkeypatch.setattr(app, "CONFIG_PATH", str(cfg_path))
+    monkeypatch.setattr(app, "LOCAL_CONFIG_PATH", str(tmp_path / "config.local.yaml"))
+    assert app.load_config()["apiKey"] == 0
+    assert not (tmp_path / "config.local.yaml").exists()

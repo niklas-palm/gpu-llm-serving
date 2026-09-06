@@ -93,10 +93,7 @@ def _persist_generated_api_key() -> str:
         # two keys, and the file only worked because PyYAML takes the last.
         def _blank_key_line(line: str) -> bool:
             code = line.split("#", 1)[0].strip()
-            if not code.startswith("apiKey:"):
-                return False
-            loaded = yaml.safe_load(code.split(":", 1)[1] or "null")
-            return loaded is None or (isinstance(loaded, str) and not loaded.strip())
+            return code.startswith("apiKey:") and _blank(yaml.safe_load(code.split(":", 1)[1] or "null"))
 
         if exists and any(_blank_key_line(line) for line in body.splitlines()):
             lines = [f"apiKey: {key}" if _blank_key_line(line) else line for line in body.splitlines()]
@@ -129,6 +126,12 @@ def _persist_generated_api_key() -> str:
     return key
 
 
+def _blank(value: object) -> bool:
+    """Absent or written as nothing. `apiKey: 0` is not blank: it goes on to validation and is
+    rejected there, instead of being silently replaced with a generated key and a second apiKey line."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
 def load_config() -> dict:
     with open(CONFIG_PATH) as fh:
         cfg = yaml.safe_load(fh) or {}
@@ -155,7 +158,7 @@ def load_config() -> dict:
     # goes to config.local.yaml because that file is gitignored: the key is not confidential from
     # anyone who can read the deployed stack (an ALB rule needs a literal), but it should still not be
     # committed to a shared repository.
-    if not str(cfg.get("apiKey") or "").strip():
+    if _blank(cfg.get("apiKey")):
         cfg["apiKey"] = _persist_generated_api_key()
 
     # The serving image, and it must be THIS project's image rather than the upstream engine image.
