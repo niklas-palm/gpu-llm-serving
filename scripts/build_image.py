@@ -62,7 +62,7 @@ phases:
       - echo "pushed $ECR/$REPO:$IMAGE_TAG"
 """
 
-def trust_policy(account: str, region: str, partition: str) -> dict:
+def trust_policy(account: str, partition: str) -> dict:
     """CodeBuild may assume the role only for this account's project of this name (confused-deputy
     conditions), not for any CodeBuild project anywhere."""
     return {
@@ -175,7 +175,7 @@ def ensure_bucket(s3, bucket: str, region: str, account: str) -> None:
     print(f"  created build bucket {bucket}")
 
 
-def ensure_role(iam, account: str, bucket: str, region: str, partition: str) -> str:
+def ensure_role(iam, account: str, partition: str) -> str:
     """Create the role if missing, and ALWAYS reconcile its inline policy.
 
     Reconciling on every run rather than returning early for an existing role: a corrected policy in
@@ -203,7 +203,7 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str) -> 
         ],
     }
     created = False
-    trust = json.dumps(trust_policy(account, region, partition))
+    trust = json.dumps(trust_policy(account, partition))
     try:
         arn = iam.get_role(RoleName=ROLE_NAME)["Role"]["Arn"]
         iam.update_assume_role_policy(RoleName=ROLE_NAME, PolicyDocument=trust)   # a role from an older run
@@ -408,7 +408,7 @@ def main() -> int:
     ensure_bucket(s3, bucket, region, account)
     # region_name on the IAM client too. IAM is global, but without it boto3 resolves the COMMERCIAL
     # endpoint, which defeats the partition derived above for aws-us-gov and aws-cn.
-    role_arn = ensure_role(boto3.client("iam", region_name=region), account, bucket, region, partition)
+    role_arn = ensure_role(boto3.client("iam", region_name=region), account, partition)
     src_key = upload_context(s3, bucket, account)
     ensure_project(cb, role_arn, bucket, src_key, ecr_host)
 
