@@ -44,6 +44,9 @@ REQUIRED = ("region", "instanceType", "modelId")
 # reading.
 ENV_OVERRIDES = {
     "SERVING_IMAGE": ("image",),
+    # For CI, where config.local.yaml does not exist: without this every run would generate a fresh
+    # key and rotate it for every client.
+    "API_KEY": ("apiKey",),
 }
 
 
