@@ -163,7 +163,7 @@ modelId: Qwen/Qwen3-30B-A3B-Instruct-2507
 Smaller weights of the same model run faster and need fewer instances; measured on this GPU with unique
 1,000-token prompts, per instance at the same load:
 
-| `modelId` | `quantization` | input tok/s per instance | note |
+| `modelId` | `quantization` | input tok/s per instance, 96 requests each on an 8-instance fleet | note |
 |---|---|---|---|
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | `"fp8"` | 14,900 | shipped default |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` | `""` | same | publisher's fp8; half the download |
@@ -672,6 +672,7 @@ config.local.yaml         optional, gitignored: overrides merged over config.yam
 AGENTS.md                 instructions for coding agents; CLAUDE.md points here
 infra/
   app.py                  CDK entry point; validates config before synthesising
+  cdk.json                CDK app command and feature flags
   hardware.py             instance catalog and all derived values (pure, tested)
   serving_stack.py        VPC, ECS, GPU capacity provider, ALB, CloudFront, service, dashboard
 container/
@@ -689,6 +690,7 @@ docs/
 tests/
   test_hardware.py        instance catalog, derived values, config validation
   test_template.py        properties of the synthesised template a deployment depends on
+  test_app.py             the API key file side effect in app.py
 ```
 
 Run the tests with `python3 -m pytest tests/ -q`. They need no AWS credentials and cover failures that

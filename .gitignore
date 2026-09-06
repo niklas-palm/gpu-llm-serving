@@ -12,7 +12,6 @@ cdk.out*/
 # Matched at any depth for the same reason as cdk.out.
 cdk.context.json
 
-# Local, uncommitted config overrides, deep-merged over config.yaml. This is where a real
-# hosted zone name or account-specific value belongs, so the tracked config can ship a
-# placeholder and nobody's domain is committed by editing the file they were told to edit.
+# Local, uncommitted config overrides, deep-merged over config.yaml. The API key, the image URI
+# and anything account-specific live here, so the tracked config stays generic.
 config.local.yaml

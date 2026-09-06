@@ -10,7 +10,7 @@ ALB and CloudFront, with an OpenAI-compatible API and a Bearer key. One config f
 much value as the code: every number in them was measured on this hardware, and the point of the sample
 is that a reader can deploy it, understand it, and tune it without reading the source.
 
-Python 3.11, CDK v2 (Python), pytest. No other build system.
+Python 3.11 or 3.12, CDK v2 (Python), pytest. No other build system.
 
 ## Setup
 

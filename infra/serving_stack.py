@@ -239,7 +239,7 @@ class ServingStack(Stack):
         # which satisfies .get() and then fails on int(None), so the default has to cover a blank
         # value - but 0 is falsy and must NOT be swallowed by it.
         # ZERO is allowed and meaningful: it is the durable way to stop paying while keeping the
-        # stack, endpoint, DNS and certificate. Scaling to zero with the CLI is drift that the next
+        # stack, endpoint and configuration. Scaling to zero with the CLI is drift that the next
         # `cdk deploy` reverts - MinSize, DesiredCount and the scalable floor are all re-established
         # from the template - so config is the only place a zero fleet survives a deploy.
         instance_count = _num(_given(cfg.get("instanceCount"), 1), "instanceCount", minimum=0)

@@ -1048,7 +1048,7 @@ Widgets are titled as questions:
 | *Did AWS give us the instances?* (in service vs desired) | Whether the ASG is still trying to grow. Capacity it cannot get looks like a persistent gap here. |
 | *How much traffic is arriving?* (requests/min, fleet total) | Offered load, for correlating everything else against. |
 
-Three alarms, all treating missing data as *not breaching*: an idle load balancer publishes nothing,
+Every alarm treats missing data as *not breaching*: an idle load balancer publishes nothing,
 and an alarm in `INSUFFICIENT_DATA` every quiet hour is an alarm nobody reads.
 
 | Alarm | Fires on | Why that delay |

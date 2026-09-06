@@ -245,8 +245,8 @@ def test_no_warning_when_there_is_headroom_to_absorb_it():
 
 
 def test_missing_serving_image_is_rejected_at_synth(tmp_path):
-    """The upstream engine image would deploy and then serve nothing: this project's Dockerfile adds
-    the AWS CLI and replaces the entrypoint with `serve`, which is what turns these env vars into
+    """The upstream engine image would deploy and then serve nothing: this project's Dockerfile
+    replaces the entrypoint with `serve`, which is what turns these env vars into
     engine flags. A default would trade a one-second failure for a 20-minute one that looks like a
     broken model.
 

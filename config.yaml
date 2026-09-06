@@ -44,7 +44,8 @@ instanceType: g7e.2xlarge
 # 16 = the GPU count of two g7e.48xlarge for about 20% less money. It covers this example workload:
 #   ~1,000 input tokens at ~70 req/s, 8 s budget       ->  70,000 input tok/s
 #   ~2,600 input tokens at ~65 req/s, 20-25 s budget   -> 170,000 input tok/s
-# One GPU sustains ~15,500 input tok/s inside an 8 s p95. 16 GPUs = ~248,000 against 240,000 needed,
+# One GPU sustains ~15,500 input tok/s inside an 8 s p95 (single-instance figure at its latency knee,
+# 16,075 measured, rounded down). 16 GPUs = ~248,000 against 240,000 needed,
 # 3% spare, so maxInstanceCount leaves room above it.
 #
 # Two fleets would cost 14, not 16. One endpoint has one latency budget, so the whole fleet meets the
