@@ -24,9 +24,7 @@ DEFAULT_STACK = "GpuLlmServing"
 def config_region(default: str = "") -> str:
     """Region from config.yaml (and config.local.yaml), matching the other scripts."""
     import yaml
-    # Honours $CONFIG, the same as infra/app.py. Without it, pointing CONFIG at another config file
-    # deployed one region while this script pushed to the region in config.yaml - exactly the drift
-    # this function exists to prevent.
+    # Honours $CONFIG, the same as infra/app.py, so this and the deploy read the same files.
     config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
     local_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "config.local.yaml")
     region = default
