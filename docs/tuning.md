@@ -1018,10 +1018,11 @@ Consequences:
 against a *fixed* 6 instances sat at p95 **8.38 s**, outside an 8-second budget. Recovering the latency
 budget, not cost, is the case for enabling it.
 
-To shorten the cold start, **stage the weights to S3 and keep the shared host volume**: an in-region S3
-read is several times faster than a Hugging Face download, and only the first task on an instance pays
-the transfer. See step 3 of the README and the host-volume note in
-[troubleshooting.md](troubleshooting.md).
+Two things about scale-in that are not obvious from the settings: the Auto Scaling group picks the
+instance to terminate by its own policy, not by which one is busiest, so a scale-in after a burst can
+drain a loaded engine while an idle one survives, and its replacement cold-starts elsewhere. And a
+redeploy is a full outage for the reload time, because with fully reserved GPUs no new task can be placed
+until an old one stops.
 
 ---
 

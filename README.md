@@ -13,10 +13,8 @@ One CDK stack, one config file. You get an endpoint serving the **Responses API*
 The defaults come from measurements on this hardware; [docs/tuning.md](docs/tuning.md) has the numbers.
 [docs/troubleshooting.md](docs/troubleshooting.md) is organised by symptom.
 
-**What it costs:** **Idle** (fleet at zero) you pay for the load balancer and NAT gateway, roughly
-$50/month, and nothing for GPUs. **Serving**, one `g7e.2xlarge` is about **$3.30/hour on-demand**; the
-shipped default of 16 is about $53/hour (~$1,270/day), or roughly 40–70% of that on spot. Scale to zero
-when not in use: see [Operating](#operating).
+**What it costs:** one `g7e.2xlarge` is about $3.30/hour on-demand, the shipped 16 about $53/hour;
+idle at zero instances about $50/month. Details and how to stop paying: [Operating](#operating).
 
 ---
 
@@ -231,6 +229,11 @@ curl -sN -X POST "$ENDPOINT/v1/responses" -H "Authorization: Bearer $API_KEY" -H
 reachable only through the VPC origin, and the load balancer already validates a header on every
 request: your API key. If you make the load balancer internet-facing, add the header the same day.
 
+**TLS.** The default `*.cloudfront.net` certificate accepts TLS 1.0 and 1.1 as well as 1.2, and that
+cannot be raised without a custom domain and certificate. If your compliance bar requires TLS 1.2 only,
+that is the one reason to add a domain: `domain_names`, `certificate` and `minimum_protocol_version` on
+the distribution.
+
 **Anyone with the key can call it, from anywhere.** To restrict by network, attach an AWS WAF web ACL
 with an IP set to the distribution (`web_acl_id` on the `Distribution` in `infra/serving_stack.py`).
 Not included: it is a cost and a policy decision.
@@ -262,9 +265,7 @@ Spot instances are reclaimed with two minutes' notice; normally the ASG launches
 protect a hard-won instance by suspending the ASG processes that can take it away:
 
 ```bash
-REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
-[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
-print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
+REGION=eu-west-2        # the region in your config
 ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`AsgName`].OutputValue' --output text)
 
@@ -592,9 +593,7 @@ project and the role `GpuLlmServingCodeBuildRole`. Nor the `gpu-llm-serving/hf-t
 one.
 
 ```bash
-REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
-[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
-print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
+REGION=eu-west-2        # the region in your config
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 aws ecr delete-repository --repository-name gpu-llm-serving --force --region "$REGION"
 aws s3 rb "s3://gpu-llm-serving-build-$ACCOUNT-$REGION" --force --region "$REGION"

@@ -10,14 +10,14 @@ the triage commands.
 Set `REGION` first. Against the wrong region every command fails as if the stack does not exist:
 
 ```bash
-REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
-[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
-print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
+REGION=eu-west-2        # the region in your config
 
 CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)
 SERVICE=$(aws ecs list-services --cluster "$CLUSTER" --region "$REGION" \
-  --query 'serviceArns[0]' --output text)
+  --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')
+LOG_GROUP=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
+  --query 'Stacks[0].Outputs[?OutputKey==`LogGroup`].OutputValue' --output text)
 
 # 1. Does the service have a running task, and is a deployment stuck?
 aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
@@ -32,9 +32,7 @@ aws ecs describe-container-instances --cluster "$CLUSTER" --container-instances 
            freeGPU:remainingResources[?name==`GPU`].stringSetValue|[0]}'
 
 # 3. What did the engine say?
-LOGS=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`LogGroup`].OutputValue' --output text)
-aws logs tail "$LOGS" --since 30m --region "$REGION"
+aws logs tail "$LOG_GROUP" --since 30m --region "$REGION"
 ```
 
 ---
@@ -78,6 +76,24 @@ lands in `DELETE_FAILED`. Wait for it, then destroy again; the retry picks up wh
 ```bash
 aws cloudfront list-vpc-origins --query 'VpcOriginList.Items[].[Name,Status]' --output text
 ```
+
+---
+
+## Symptom: a first deploy sits in `CREATE_IN_PROGRESS` with tasks stopping
+
+The image cannot be pulled (the build failed after `--write-config` wrote the URI, or a Docker Hub pull
+was rate-limited during the build) or the engine crashes on start. CloudFormation waits on the ECS
+service for up to three hours before rolling back, and `cancel-update-stack` does not apply to a create.
+
+```bash
+aws ecs describe-tasks --cluster "$CLUSTER" --region "$REGION" \
+  --tasks $(aws ecs list-tasks --cluster "$CLUSTER" --region "$REGION" --desired-status STOPPED \
+            --query 'taskArns[0]' --output text) \
+  --query 'tasks[0].[stopCode,stoppedReason,containers[0].reason]'
+```
+
+Do not wait. `aws cloudformation delete-stack --stack-name GpuLlmServing --region "$REGION"`, fix the
+cause (`python3 scripts/build_image.py --status <id>` for the build), deploy again.
 
 ---
 
@@ -511,41 +527,15 @@ aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count
 
 ## Symptom: you scaled the service to zero and it came back
 
-You set `--desired-count 0`, the tasks stopped, and minutes later the service is back at its original
-count with GPU instances relaunched.
+You set `--desired-count 0` by hand. When `maxInstanceCount > instanceCount`, the stack registers a
+scalable target whose `MinCapacity` is `instanceCount`, and Application Auto Scaling pushes the service
+straight back to it. Any capacity set with the CLI is drift: the next `cdk deploy` restores the template.
 
-**Cause: the autoscaling scalable target has a `MinCapacity` floor, and it is enforced.**
+**Fix:** set `instanceCount: 0` and `maxInstanceCount: 0` in your config and deploy. README,
+*Scale to zero without tearing down*.
 
-When `maxInstanceCount > instanceCount`, the stack registers a scalable target with minimum
-`instanceCount`. Application Auto Scaling pushes the service back to that floor and the capacity
-provider relaunches instances.
-
-```bash
-aws application-autoscaling describe-scalable-targets --service-namespace ecs --region "$REGION" \
-  --resource-ids "service/$CLUSTER/$SERVICE" \
-  --query 'ScalableTargets[].{min:MinCapacity,max:MaxCapacity}'
-```
-
-**Fix: drop the floor FIRST, then the service, then the ASG.** Any other order pushes the service back
-up. Full sequence and reverse: README, *Scale to zero without tearing down*.
-
-```bash
-aws application-autoscaling register-scalable-target --service-namespace ecs --region "$REGION" \
-  --resource-id "service/$CLUSTER/$SERVICE" \
-  --scalable-dimension ecs:service:DesiredCount --min-capacity 0 --max-capacity 8
-```
-
-When restoring, put the floor back, or autoscaling stays pinned at a minimum of 0.
-
-**The CLI leaves an orphan behind.** A hand-registered scalable target is not owned by CloudFormation
-and survives a deploy that stops declaring one, including a deploy with `instanceCount: 0`. Observed:
-the template had zero `ScalableTarget` resources while `describe-scalable-targets` still returned one
-with a `MaxCapacity` from an earlier configuration. Harmless at `MinCapacity: 0`, but later changes are
-governed by bounds absent from your configuration.
-
-CLI capacity changes are drift: a deploy reverts what CloudFormation owns and leaves the rest. Prefer
-changing `instanceCount` (and `maxInstanceCount`) in configuration. Remove a hand-registered target
-with:
+If you also registered a scalable target by hand, CloudFormation does not own it and it survives every
+deploy. Remove it:
 
 ```bash
 aws application-autoscaling deregister-scalable-target --service-namespace ecs --region "$REGION" \
