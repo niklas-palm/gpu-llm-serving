@@ -8,7 +8,7 @@
 # docs/tuning.md; each setting names its section.
 #
 # Values you do not want to commit (API key, account-specific image URI) go in config.local.yaml,
-# gitignored and deep-merged over this file. SERVING_IMAGE in the environment overrides both, for a
+# gitignored and deep-merged over this file. SERVING_IMAGE and API_KEY in the environment override both, for a
 # pipeline that builds and deploys in one run. An empty variable counts as unset. `region` is not
 # settable from the environment; see infra/app.py.
 #

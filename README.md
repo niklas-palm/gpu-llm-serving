@@ -173,7 +173,7 @@ maxInstanceCount: 2
 ```
 
 The API key lands here too, generated on first deploy (see [Notes](#notes-and-limitations)).
-`SERVING_IMAGE` is the one environment variable that overrides both files, for a build-and-deploy
+`SERVING_IMAGE` and `API_KEY` are the two environment variables that override both files, for a build-and-deploy
 pipeline; an **empty** variable counts as unset. `region` is **not** settable this way: `$AWS_REGION` is
 often set to something unrelated.
 
