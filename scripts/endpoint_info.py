@@ -35,7 +35,8 @@ def config_region(default: str = "") -> str:
             continue
         with open(path) as fh:
             region = ((yaml.safe_load(fh) or {}).get("region") or region)
-    return region or os.environ.get("AWS_REGION", "")
+    # No $AWS_REGION fallback: app.py refuses it on purpose, and the two tools must agree.
+    return region
 
 
 def main() -> int:
