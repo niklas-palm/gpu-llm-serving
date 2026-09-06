@@ -62,14 +62,21 @@ phases:
       - echo "pushed $ECR/$REPO:$IMAGE_TAG"
 """
 
-TRUST = {
-    "Version": "2012-10-17",
-    "Statement": [{
-        "Effect": "Allow",
-        "Principal": {"Service": "codebuild.amazonaws.com"},
-        "Action": "sts:AssumeRole",
-    }],
-}
+def trust_policy(account: str, region: str, partition: str) -> dict:
+    """CodeBuild may assume the role only for this account's project of this name (confused-deputy
+    conditions), not for any CodeBuild project anywhere."""
+    return {
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "codebuild.amazonaws.com"},
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {"aws:SourceAccount": account},
+                "ArnLike": {"aws:SourceArn": f"arn:{partition}:codebuild:{region}:{account}:project/{PROJECT_NAME}"},
+            },
+        }],
+    }
 
 # Untagged images are the layers left behind when a tag is moved to a rebuilt image. Nothing reads
 # them, and they are billed, so a sample should not quietly accumulate them.
@@ -191,7 +198,7 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "a
         arn = iam.get_role(RoleName=ROLE_NAME)["Role"]["Arn"]
     except iam.exceptions.NoSuchEntityException:
         arn = iam.create_role(
-            RoleName=ROLE_NAME, AssumeRolePolicyDocument=json.dumps(TRUST),
+            RoleName=ROLE_NAME, AssumeRolePolicyDocument=json.dumps(trust_policy(account, region, partition)),
             Description="CodeBuild: build the GPU serving image and push it to ECR",
         )["Role"]["Arn"]
         created = True
@@ -199,6 +206,8 @@ def ensure_role(iam, account: str, bucket: str, region: str, partition: str = "a
 
     iam.put_role_policy(RoleName=ROLE_NAME, PolicyName="BuildAndPush",
                         PolicyDocument=json.dumps(policy))
+    iam.update_assume_role_policy(RoleName=ROLE_NAME,
+                                  PolicyDocument=json.dumps(trust_policy(account, region, partition)))
     if created:
         # A brand-new role is not immediately usable by CodeBuild; without this the first build fails
         # with "not authorized to perform sts:AssumeRole".
