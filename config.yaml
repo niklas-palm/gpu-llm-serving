@@ -26,7 +26,8 @@ region: us-west-2
 
 # Optional. Confine the VPC, and so the GPU instances, to these zones.
 # Empty spans up to four zones. Set it when a zone lacks the type (us-east-2: three zones, g7e in two)
-# to avoid failed launch attempts there. At least two; the load balancer needs two subnets.
+# to avoid failed launch attempts there. At least two; the load balancer needs two subnets. Spot
+# capacity often exists in only one of them, so the fleet ends up in one zone; that is fine.
 #   availabilityZones: ["us-east-2a", "us-east-2b"]
 availabilityZones: []
 
