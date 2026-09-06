@@ -723,6 +723,3 @@ would otherwise take a 20-minute deployment to surface.
   token whose account has not accepted the licence, a 403.
 - **g7e only.** The instance catalog in `infra/hardware.py` knows the six g7e sizes and rejects anything
   else at synth. Another GPU family means adding its entries there; nothing else assumes g7e.
-- **Benchmarking:** `scripts/test_endpoint.py` is a smoke check; `scripts/benchmark.py` is the
-  benchmark. Set `maxInstanceCount` equal to `instanceCount` first so autoscaling does not move under
-  the measurement.

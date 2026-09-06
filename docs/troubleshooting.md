@@ -18,6 +18,10 @@ SERVICE=$(aws ecs list-services --cluster "$CLUSTER" --region "$REGION" \
   --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')
 LOG_GROUP=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
   --query 'Stacks[0].Outputs[?OutputKey==`LogGroup`].OutputValue' --output text)
+ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
+  --query 'Stacks[0].Outputs[?OutputKey==`AsgName`].OutputValue' --output text)
+TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
+  --query 'services[0].taskDefinition' --output text)
 
 # 1. Does the service have a running task, and is a deployment stuck?
 aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$REGION" \
@@ -167,8 +171,7 @@ The instance passes every EC2 and ASG health check, joins the cluster, reports `
 and advertises no GPUs, so a task requesting one can never be placed. Check:
 
 ```bash
-CLUSTER=<your cluster>
-CI=$(aws ecs list-container-instances --cluster "$CLUSTER" \
+CI=$(aws ecs list-container-instances --cluster "$CLUSTER" --region "$REGION" \
   --query 'containerInstanceArns' --output text)
 aws ecs describe-container-instances --cluster "$CLUSTER" --container-instances $CI --region "$REGION" \
   --query 'containerInstances[].{
@@ -262,8 +265,6 @@ containers hold the writable layers that take the space.
 Read the reason:
 
 ```bash
-ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing \
-  --query 'Stacks[0].Outputs[?OutputKey==`AsgName`].OutputValue' --output text)
 aws autoscaling describe-scaling-activities --auto-scaling-group-name "$ASG" --region "$REGION" \
   --max-items 5 --query 'Activities[].[StatusCode,StatusMessage]' --output text
 ```
@@ -307,7 +308,7 @@ availabilityZones: ["us-east-2a", "us-east-2b"]
 The load balancer has no healthy target.
 
 ```bash
-TG=$(aws elbv2 describe-target-groups --query 'TargetGroups[?contains(TargetGroupName,`Targets`)].TargetGroupArn|[0]' --output text)
+TG=$(aws elbv2 describe-target-groups --region "$REGION" --query 'TargetGroups[?contains(TargetGroupName,`Targets`)].TargetGroupArn|[0]' --output text)
 aws elbv2 describe-target-health --target-group-arn "$TG" --region "$REGION" \
   --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State,TargetHealth.Reason]'
 ```
