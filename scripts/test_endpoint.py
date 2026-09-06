@@ -47,7 +47,7 @@ def _json(r: requests.Response) -> dict:
 def check_models(url: str, key: str) -> str:
     """Returns the served model name, which every later request needs."""
     r = requests.get(f"{url}/v1/models", headers=headers(key), timeout=30)
-    names = [m.get("id") for m in (_json(r).get("data") or [])] if r.ok else []
+    names = [m["id"] for m in (_json(r).get("data") or []) if isinstance(m, dict) and m.get("id")] if r.ok else []
     print(f"  /v1/models              HTTP {r.status_code}  {names}")
     return names[0] if names else ""
 
@@ -64,8 +64,8 @@ def check_responses(url: str, key: str, model: str) -> bool:
         d = _json(r)
         # The Responses API nests output differently from Chat Completions.
         for item in d.get("output") or []:
-            for c in item.get("content") or []:
-                text += c.get("text") or ""
+            for c in (item.get("content") or []) if isinstance(item, dict) else []:
+                text += (c.get("text") or "") if isinstance(c, dict) else ""
         text = text or d.get("output_text") or ""
     print(f"  /v1/responses           HTTP {r.status_code}  {text.strip()[:60]!r}")
     # A 200 with no text is not serving: a captive portal or a misrouted proxy answers 200 to anything.

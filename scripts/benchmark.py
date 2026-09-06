@@ -127,7 +127,9 @@ def served_model(url: str, key: str) -> str:
     r = None
     try:
         r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-        models = [m["id"] for m in r.json().get("data", [])] if r.ok else []
+        body = r.json() if r.ok else {}
+        data = body.get("data") if isinstance(body, dict) else None
+        models = [m["id"] for m in data or [] if isinstance(m, dict) and m.get("id")]
     except (requests.RequestException, ValueError):
         models = []
     if not models:
