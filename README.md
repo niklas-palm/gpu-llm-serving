@@ -399,7 +399,6 @@ is a stack output:
 | `PurchaseModel` | `spot` or `on-demand`, as deployed |
 | `ApiKeyValue` | the key to send as `Authorization: Bearer <key>` |
 | `ModelName` | the model id to put in requests |
-| `ApiKeySecret` | Secrets Manager secret holding the same value |
 | `ClusterName`, `AsgName`, `LogGroup` | for the operational commands below |
 | `ResolvedTensorParallel`, `GpusPerReplica`, `ContainerMemoryMib` | what the derivation chose |
 
@@ -705,8 +704,7 @@ would otherwise take a 20-minute deployment to surface.
   [Access](#access) for WAF restriction and the 120 s non-streamed limit.
 - **The API key is a gate, not an authorization layer, and it is not confidential.** An ALB listener
   rule cannot resolve a Secrets Manager reference, so it holds a literal value. Anyone who can read the
-  stack sees the key in the CloudFormation template, the stack outputs (`ApiKeyValue`), and the Secrets
-  Manager entry, which is a **convenience copy**, not a confidentiality boundary. One shared secret, no
+  stack sees the key in the CloudFormation template and the stack outputs (`ApiKeyValue`). One shared secret, no
   per-caller identity, rotation or revocation. Keeps unauthenticated traffic off the model; not
   sufficient for sensitive data. See [that section](#if-you-need-auth-that-holds-a-real-secret).
 - **The key is generated once and persisted to `config.local.yaml`** on first deploy, so redeploys

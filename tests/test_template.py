@@ -680,19 +680,6 @@ def _enforced_key(template: dict) -> str:
     raise AssertionError("no http-header condition on the listener rule")
 
 
-def _stored_key(template: dict) -> str:
-    secret = only(template, "AWS::SecretsManager::Secret")
-    return secret["SecretString"]
-
-
-def test_the_stored_key_is_the_key_the_load_balancer_enforces():
-    """These were two independent random values. The secret was decorative and actively misleading:
-    anyone retrieving the key as the docs instructed got a 403."""
-    template = synth()
-    assert _enforced_key(template) == _stored_key(template) == BASE["apiKey"]
-
-
-
 def test_the_stack_refuses_to_invent_a_key():
     """Generating one here would rotate it on every synth, so the stack requires it and points at
     where a stable one comes from."""

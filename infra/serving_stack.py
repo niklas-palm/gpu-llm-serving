@@ -383,17 +383,6 @@ class ServingStack(Stack):
                 "  No * or ? (the load balancer treats them as wildcards) and no spaces. The generated\n"
                 "  key satisfies this; if you set your own, keep to that alphabet.")
 
-        # A convenience copy, so callers have somewhere conventional to read it from - NOT a
-        # confidentiality boundary, for the reason above. `unsafe_plain_text` is the honest API here:
-        # the value is in the template. A generator would produce a SECOND value.
-        api_key = secretsmanager.Secret(
-            self, "ApiKey",
-            description=("Inference endpoint API key. Convenience copy - the same value is in the "
-                         "stack template and outputs, so treat it as non-confidential."),
-            secret_string_value=SecretValue.unsafe_plain_text(key_value),
-            removal_policy=RemovalPolicy.DESTROY,
-        )
-
         # ------------------------------------------------------------------ load balancer
         #
         # INTERNAL, always. Nothing here faces the internet: CloudFront (below) is the only way in, and
@@ -959,12 +948,10 @@ service:
         CfnOutput(self, "DistributionId", value=distribution.distribution_id,
                   description="The CloudFront distribution in front of the load balancer")
         CfnOutput(self, "ApiKeyValue", value=key_value,
-                  description="Send as Authorization: Bearer <key>. Also visible in the template and in "
-                              "Secrets Manager - not confidential from anyone who can read the stack")
+                  description="Send as Authorization: Bearer <key>. Also visible in the template, so not "
+                              "confidential from anyone who can read the stack")
         CfnOutput(self, "ModelName", value=cfg["modelId"],
                   description="The model id to put in requests; also what /v1/models returns")
-        CfnOutput(self, "ApiKeySecret", value=api_key.secret_name,
-                  description="Convenience copy of the same value, not a confidentiality boundary")
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
         CfnOutput(self, "AsgName", value=asg.auto_scaling_group_name)
         CfnOutput(self, "LogGroup", value=log_group.log_group_name)
