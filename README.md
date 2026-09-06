@@ -400,7 +400,7 @@ is a stack output:
 | `ModelName` | the model id to put in requests |
 | `DashboardUrl`, `DashboardName` | the CloudWatch dashboard |
 | `ClusterName`, `AsgName`, `LogGroup` | for the operational commands below |
-| `ResolvedTensorParallel`, `GpusPerReplica`, `ContainerMemoryMib` | what the derivation chose |
+| `ResolvedTensorParallel`, `ContainerMemoryMib` | what the derivation chose |
 
 ### 5. Test it
 

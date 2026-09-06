@@ -64,8 +64,7 @@ def main() -> int:
     print(f"Endpoint     {endpoint}   (HTTPS via CloudFront; the load balancer behind it is internal)")
     print(f"API key      {key}")
     print(f"Model name   {model}")
-    for label, k in (("TP degree", "ResolvedTensorParallel"),
-                     ("GPUs/task", "GpusPerReplica"),
+    for label, k in (("GPUs/engine", "ResolvedTensorParallel"),
                      ("Purchase", "PurchaseModel")):
         if out.get(k):
             print(f"{label:<12} {out[k]}")

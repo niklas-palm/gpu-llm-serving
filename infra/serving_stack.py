@@ -986,7 +986,6 @@ service:
                          f"?region={self.region}#dashboards:name={dashboard_name}"),
                   description="Open this to see whether the fleet is healthy")
         CfnOutput(self, "ResolvedTensorParallel", value=str(tuning["tensorParallel"]))
-        CfnOutput(self, "GpusPerReplica", value=str(tuning["tensorParallel"]))
         CfnOutput(self, "ContainerMemoryMib", value=str(inst.container_memory_mib
                                                        // tuning["replicas"]))
         CfnOutput(self, "PurchaseModel", value="spot" if use_spot else "on-demand")
