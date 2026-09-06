@@ -222,7 +222,8 @@ def test_shipped_config_does_not_warn(capsys):
     config is worse than no warning, because it teaches people to ignore the next one."""
     import yaml
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    cfg = yaml.safe_load(open(os.path.join(root, "config.yaml")))
+    with open(os.path.join(root, "config.yaml")) as fh:
+        cfg = yaml.safe_load(fh)
 
     synth(quantization=cfg.get("quantization"), tuning=cfg["tuning"])
     assert "Warning" not in capsys.readouterr().err
