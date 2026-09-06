@@ -130,7 +130,8 @@ estimatedParamsBillions: 30
 # about 2x the fleet for the same work. Prefer a publisher's official FP8 build as modelId when one
 # exists. If you clear this for bf16 weights, set kvCacheDtype: auto below.
 # NVFP4 measured another +25% over fp8 on this GPU but needs a calibrated checkpoint (set modelId to the
-# publisher's NVFP4 build and clear this) and its output quality is unmeasured, so fp8 stays the default.
+# publisher's NVFP4 build and clear this): vLLM's load-time "nvfp4_per_token" refuses this GPU (it wants
+# SM100, the B200). Output quality is unmeasured, so fp8 stays the default.
 # docs/tuning.md, "Quantisation is two independent decisions" and "NVFP4".
 quantization: "fp8"
 

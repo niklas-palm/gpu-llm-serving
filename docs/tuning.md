@@ -292,6 +292,12 @@ is too short to say whether that is noise. Weights are half the size of FP8 agai
 another ~15 GiB. Output quality was not measured, the same caveat as AWQ below, which is why FP8 stays
 the default. To use it, set `modelId` to the NVFP4 checkpoint and clear `quantization`.
 
+**Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
+quantises bf16 weights at load time the way `fp8` does. On g7e the engine refuses to start:
+`nvfp4_per_token online quantization requires a Blackwell (SM100) GPU`. The RTX PRO 6000 is Blackwell
+SM120, not the SM100 of B200. So on this hardware NVFP4 means a calibrated checkpoint, and the load-time
+convenience of fp8 has no NVFP4 equivalent.
+
 **NVFP4 and EAGLE-3 stack.** The two together, on six instances at the same 96 requests per engine:
 133,463 input tok/s, 22,244 per instance against 14,903 for the shipped FP8, **+49% per GPU**, p95
 4.54 s against 6.33 s. Acceptance length fell from 2.2 to 1.95, since the speculator was trained against
