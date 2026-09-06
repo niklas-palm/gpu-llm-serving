@@ -199,6 +199,10 @@ class ServingStack(Stack):
             # a mixed-instances policy does not set one, so that option is a silent no-op here.
             gpu_user_data.add_commands(
                 "echo ECS_ENABLE_SPOT_INSTANCE_DRAINING=true >> /etc/ecs/ecs.config")
+        # Tasks get credentials from the ECS credential endpoint, never from the instance's IMDS. Block
+        # IMDS for awsvpc tasks explicitly rather than relying on the IMDSv2 hop limit to do it by
+        # accident (the disableEcsImdsBlocking flag in cdk.json turns off the construct's own blocking).
+        gpu_user_data.add_commands("echo ECS_AWSVPC_BLOCK_IMDS=true >> /etc/ecs/ecs.config")
 
         launch_template = ec2.LaunchTemplate(
             self, "GpuLaunchTemplate",

@@ -1180,3 +1180,10 @@ def test_image_layers_reach_s3_through_a_free_gateway_endpoint_not_the_nat():
     assert len(endpoints) == 1
     assert endpoints[0]["VpcEndpointType"] == "Gateway"
     assert "s3" in str(endpoints[0]["ServiceName"])
+
+
+def test_tasks_cannot_reach_the_instance_metadata_service():
+    """Task credentials come from the ECS endpoint. Instance credentials must not be reachable from a
+    container, and the setting has to be explicit rather than a side effect of the IMDSv2 hop limit."""
+    lt = only(synth(), "AWS::EC2::LaunchTemplate")["LaunchTemplateData"]
+    assert "ECS_AWSVPC_BLOCK_IMDS=true" in str(lt["UserData"])
