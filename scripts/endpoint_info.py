@@ -21,20 +21,7 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 DEFAULT_STACK = "GpuLlmServing"
 
 
-def config_region(default: str = "") -> str:
-    """Region from config.yaml (and config.local.yaml), matching the other scripts."""
-    import yaml
-    # Honours $CONFIG, the same as infra/app.py, so this and the deploy read the same files.
-    config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
-    local_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "config.local.yaml")
-    region = default
-    for path in (config_path, local_path):
-        if not os.path.exists(path):
-            continue
-        with open(path) as fh:
-            region = ((yaml.safe_load(fh) or {}).get("region") or region)
-    # No $AWS_REGION fallback: app.py refuses it on purpose, and the two tools must agree.
-    return region
+from build_image import _run, config_region  # noqa: E402  (same directory)
 
 
 def main() -> int:
@@ -101,32 +88,5 @@ python3 scripts/benchmark.py "{endpoint}" --key "{key}" --concurrency 64,128,256
     return 0
 
 
-def _run() -> int:
-    """Turn an AWS API failure into one actionable line instead of a botocore traceback.
-
-    Worth doing because the most common failure by far is an expired SSO session, and unhandled it
-    surfaced as `ClientError: An error occurred (ExpiredToken)` with a stack trace at whichever API
-    call happened to come first - which tells the reader nothing about what to do.
-    """
-    try:
-        return main()
-    except KeyboardInterrupt:
-        print("\ninterrupted.", file=sys.stderr)
-        return 130
-    except (ClientError, BotoCoreError) as e:
-        code = getattr(e, "response", {}).get("Error", {}).get("Code", type(e).__name__)
-        msg = getattr(e, "response", {}).get("Error", {}).get("Message", str(e))
-        print(f"\nAWS error: {code} - {msg}", file=sys.stderr)
-        if code in ("ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId",
-                    "UnrecognizedClientException", "AccessDenied", "AccessDeniedException",
-                    "CredentialsError", "NoCredentialsError"):
-            print("  Check your credentials (and that they are for the right account), then retry.",
-                  file=sys.stderr)
-        else:
-            print("  Check that `region` in your config is correct and that these credentials can\n"
-                  "  reach it.", file=sys.stderr)
-        return 1
-
-
 if __name__ == "__main__":
-    sys.exit(_run())
+    sys.exit(_run(main))

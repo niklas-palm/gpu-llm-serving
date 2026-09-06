@@ -96,7 +96,7 @@ def config_region(default: str = "") -> str:
     # deployed one region while this script pushed to the region in config.yaml - exactly the drift
     # this function exists to prevent.
     config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
-    local_path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "config.local.yaml")
+    local_path = local_config_path()
     region = default
     for path in (config_path, local_path):
         if not os.path.exists(path):
@@ -327,8 +327,7 @@ def write_image_uri(uri: str) -> None:
     # tracked - a test fails if an account id appears in it, precisely so this cannot leak.
     # Next to whichever config is in use, the same rule as app.py, or a run with $CONFIG pointing
     # elsewhere writes a file the deploy never reads.
-    config_path = os.environ.get("CONFIG", os.path.join(ROOT, "config.yaml"))
-    path = os.path.join(os.path.dirname(os.path.abspath(config_path)), "config.local.yaml")
+    path = local_config_path()
     header = ("# Local overrides, deep-merged over config.yaml. Gitignored, so this is where\n"
               "# account-specific values belong.\n")
     # A line-level edit rather than a YAML round-trip, so anything else already in this file -
@@ -430,7 +429,7 @@ def main() -> int:
     return 0
 
 
-def _run() -> int:
+def _run(entry=None) -> int:
     """Turn an AWS API failure into one actionable line instead of a botocore traceback.
 
     Worth doing because the most common failure by far is an expired SSO session, and unhandled it
@@ -438,7 +437,7 @@ def _run() -> int:
     call happened to come first - which tells the reader nothing about what to do.
     """
     try:
-        return main()
+        return (entry or main)()
     except KeyboardInterrupt:
         print("\ninterrupted.", file=sys.stderr)
         return 130
