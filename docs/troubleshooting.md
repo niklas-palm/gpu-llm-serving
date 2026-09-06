@@ -260,7 +260,7 @@ aws autoscaling describe-scaling-activities --auto-scaling-group-name "$ASG" --r
 | `VcpuLimitExceeded` | on-demand vCPU quota exceeded | request an increase on `L-DB2E81BA` |
 | `InsufficientInstanceCapacity` | AWS has none of this shape in that zone right now | try `useSpot: true`, another region, or wait |
 | `Unsupported ... not supported in your requested Availability Zone` | that zone never offers this type | deterministic for that zone; the group retries in others. Set `availabilityZones` to the zones that offer it (see below) |
-| `not authorized to use launch template` | IAM | the instance role needs `ec2:RunInstances` and `iam:PassRole` |
+| `not authorized to use launch template` | IAM | the principal running `cdk deploy` needs `ec2:RunInstances` and `iam:PassRole` on the instance role; the instance role itself is not involved |
 
 - Quotas are per-region and per-purchase-model. On-demand quota says nothing about spot.
   `g7e.24xlarge` (96 vCPU) and `g7e.48xlarge` (192 vCPU) both exceed the typical 64 vCPU spot default.
