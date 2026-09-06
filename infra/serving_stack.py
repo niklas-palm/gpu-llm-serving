@@ -680,7 +680,7 @@ service:
         # ------------------------------------------------------------------ autoscaling
         #
         # Created only when maxInstanceCount exceeds instanceCount. The shipped config does exceed it
-        # (6 -> 8), so autoscaling is ON by default; set them equal for a fixed-size fleet.
+        # (16 -> 24), so autoscaling is ON by default; set them equal for a fixed-size fleet.
         #
         # Either way it is burst absorption, NOT right-sizing: a new task loads tens of GiB of weights,
         # so it is minutes from scale-out decision to serving traffic. Nothing that slow can protect a
