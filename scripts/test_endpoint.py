@@ -49,7 +49,7 @@ def check_models(url: str, key: str) -> str:
     r = requests.get(f"{url}/v1/models", headers=headers(key), timeout=30)
     names = [m.get("id") for m in (_json(r).get("data") or [])] if r.ok else []
     print(f"  /v1/models              HTTP {r.status_code}  {names}")
-    return names[0] if names else "model"
+    return names[0] if names else ""
 
 
 def check_responses(url: str, key: str, model: str) -> bool:
@@ -173,6 +173,10 @@ def main() -> int:
 
     try:
         model = check_models(url, a.key)
+        if not model:
+            print("\n/v1/models lists nothing: the engine is not serving a model yet. If the deploy just "
+                  "finished, wait for the weights to load; otherwise see docs/troubleshooting.md.")
+            return 1
         has_responses = check_responses(url, a.key, model)
         ok_chat = check_chat(url, a.key, model)
         check_streaming(url, a.key, model)

@@ -40,7 +40,10 @@ def prompt(n_tokens: int, shared: bool) -> str:
 
 def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int, seconds: float,
            shared: bool, q: mp.Queue) -> None:
+    import signal
     import threading
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)   # the parent handles Ctrl-C and terminates us
 
     stop = threading.Event()
     lock = threading.Lock()
