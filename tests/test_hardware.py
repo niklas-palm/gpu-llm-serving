@@ -501,3 +501,18 @@ def test_a_scalar_where_a_block_of_settings_belongs_says_so(value):
 
 def test_an_absent_block_is_not_an_error():
     assert _mapping(None, "tuning") == {}
+
+
+@pytest.mark.parametrize("model_id, quantization, expected", [
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "", 2.0),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "fp8", 1.0),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507-FP8", "", 1.0),
+    ("nvidia/Qwen3-30B-A3B-NVFP4", "", 0.5),
+    ("Qwen/Qwen3-30B-A3B-Instruct-2507", "awq", 0.5),
+    ("some-org/model-GPTQ-Int4", "", 0.5),
+])
+def test_bytes_per_parameter_follows_the_quantisation_width(model_id, quantization, expected):
+    """4-bit formats were counted as 1 byte, doubling the estimate and deriving TP=2 for a model that
+    fits one GPU."""
+    from hardware import bytes_per_param_for
+    assert bytes_per_param_for(model_id, quantization) == expected

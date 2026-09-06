@@ -168,8 +168,18 @@ def weights_are_quantised(model_id: str, quantization: str | None) -> bool:
     return any(marker in name for marker in QUANTISED_MODEL_MARKERS)
 
 
+FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "nvfp4", "fp4", "4bit", "4-bit")
+
+
 def bytes_per_param_for(model_id: str, quantization: str | None) -> float:
-    """1 byte for quantised weights, 2 for full precision. See weights_are_quantised."""
+    """0.5 bytes for 4-bit formats, 1 for 8-bit, 2 for full precision. See weights_are_quantised.
+
+    Treating every quantised format as 1 byte over-estimated 4-bit checkpoints by 2x, enough to derive
+    tensorParallel: 2 for a model that fits one GPU.
+    """
+    name = f"{model_id or ''} {quantization or ''}".lower()
+    if any(m in name for m in FOUR_BIT_MARKERS):
+        return 0.5
     return 1.0 if weights_are_quantised(model_id, quantization) else 2.0
 
 
