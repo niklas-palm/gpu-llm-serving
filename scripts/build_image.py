@@ -315,63 +315,9 @@ def wait_for(cb, build_id: str, region: str) -> bool:
         raise
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--region", default=None, help="defaults to `region` in config.yaml")
-    ap.add_argument("--tag", default=TAG)
-    ap.add_argument("--write-config", action="store_true",
-                    help="write the image URI into config.local.yaml (gitignored)")
-    ap.add_argument("--status", default=None, help="report on an existing build id and exit")
-    a = ap.parse_args()
-
-    region = a.region or config_region()
-    if not region:
-        sys.exit("no region: set `region` in config.yaml, or pass --region")
-
-    cb = boto3.client("codebuild", region_name=region)
-    if a.status:
-        builds = cb.batch_get_builds(ids=[a.status])["builds"]
-        if not builds:
-            sys.exit(f"no build found with id {a.status} (build history ages out, and the id must "
-                     f"include the project name).")
-        report(builds[0])
-        # Non-zero on a failed build, so this is usable in a script rather than always succeeding.
-        return 0 if builds[0].get("buildStatus") == "SUCCEEDED" else 1
-
-    ident = boto3.client("sts", region_name=region).get_caller_identity()
-    account = ident["Account"]
-    # From the caller's own ARN, so the policies below are correct in aws-us-gov and
-    # aws-cn too - the stack already uses self.partition for the same reason.
-    partition = ident["Arn"].split(":")[1]
-    # The DNS suffix follows the PARTITION, which is derived just above. Hardcoding amazonaws.com
-    # meant this function could not emit a China URI even though the stack's image regex accepts one.
-    dns = "amazonaws.com.cn" if partition == "aws-cn" else "amazonaws.com"
-    ecr_host = f"{account}.dkr.ecr.{region}.{dns}"
-    uri = f"{ecr_host}/{REPO_NAME}:{a.tag}"
-    bucket = f"{REPO_NAME}-build-{account}-{region}"
-
-    print(f"Building {uri}\n  region: {region}   (nothing large crosses your connection)")
-    ensure_repo(boto3.client("ecr", region_name=region))
-    s3 = boto3.client("s3", region_name=region)
-    ensure_bucket(s3, bucket, region)
-    # region_name on the IAM client too. IAM is global, but without it boto3 resolves the COMMERCIAL
-    # endpoint, which defeats the partition derived above for aws-us-gov and aws-cn.
-    role_arn = ensure_role(boto3.client("iam", region_name=region), account, bucket, partition)
-    src_key = upload_context(s3, bucket)
-    ensure_project(cb, role_arn, bucket, src_key, ecr_host)
-
-    build_id = cb.start_build(
-        projectName=PROJECT_NAME,
-        environmentVariablesOverride=[{"name": "IMAGE_TAG", "value": a.tag}],
-    )["build"]["id"]
-    print(f"\nstarted build {build_id}")
-    print(f"  if this shell is interrupted: python3 scripts/build_image.py --status {build_id}")
-    print("  phases (the base image is ~9 GB, so expect roughly 10-15 minutes):")
-    if not wait_for(cb, build_id, region):
-        return 1
-
-    print(f"\nImage: {uri}")
-    if a.write_config:
+def write_image_uri(uri: str) -> None:
+    """Write `image: <uri>` into config.local.yaml, replacing any existing image line."""
+    if True:
         # config.local.yaml, never config.yaml. The URI contains the account id, and config.yaml is
         # tracked - a test fails if an account id appears in it, precisely so this cannot leak.
         path = os.path.join(ROOT, "config.local.yaml")
@@ -408,6 +354,75 @@ def main() -> int:
           "    --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')\n"
           f"  aws ecs update-service --cluster \"$CLUSTER\" --service \"$SERVICE\" --region {region} \\\n"
           "    --force-new-deployment")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--region", default=None, help="defaults to `region` in config.yaml")
+    ap.add_argument("--tag", default=TAG)
+    ap.add_argument("--write-config", action="store_true",
+                    help="write the image URI into config.local.yaml (gitignored)")
+    ap.add_argument("--status", default=None, help="report on an existing build id and exit")
+    a = ap.parse_args()
+
+    region = a.region or config_region()
+    if not region:
+        sys.exit("no region: set `region` in config.yaml, or pass --region")
+
+    cb = boto3.client("codebuild", region_name=region)
+    if a.status:
+        builds = cb.batch_get_builds(ids=[a.status])["builds"]
+        if not builds:
+            sys.exit(f"no build found with id {a.status} (build history ages out, and the id must "
+                     f"include the project name).")
+        report(builds[0])
+        ok = builds[0].get("buildStatus") == "SUCCEEDED"
+        if ok and a.write_config:
+            ident = boto3.client("sts", region_name=region).get_caller_identity()
+            dns = "amazonaws.com.cn" if ident["Arn"].split(":")[1] == "aws-cn" else "amazonaws.com"
+            write_image_uri(f"{ident['Account']}.dkr.ecr.{region}.{dns}/{REPO_NAME}:{a.tag}")
+        # Non-zero on a failed build, so this is usable in a script rather than always succeeding.
+        return 0 if ok else 1
+
+    ident = boto3.client("sts", region_name=region).get_caller_identity()
+    account = ident["Account"]
+    # From the caller's own ARN, so the policies below are correct in aws-us-gov and
+    # aws-cn too - the stack already uses self.partition for the same reason.
+    partition = ident["Arn"].split(":")[1]
+    # The DNS suffix follows the PARTITION, which is derived just above. Hardcoding amazonaws.com
+    # meant this function could not emit a China URI even though the stack's image regex accepts one.
+    dns = "amazonaws.com.cn" if partition == "aws-cn" else "amazonaws.com"
+    ecr_host = f"{account}.dkr.ecr.{region}.{dns}"
+    uri = f"{ecr_host}/{REPO_NAME}:{a.tag}"
+    bucket = f"{REPO_NAME}-build-{account}-{region}"
+
+    print(f"Building {uri}\n  region: {region}   (nothing large crosses your connection)")
+    ensure_repo(boto3.client("ecr", region_name=region))
+    s3 = boto3.client("s3", region_name=region)
+    ensure_bucket(s3, bucket, region)
+    # region_name on the IAM client too. IAM is global, but without it boto3 resolves the COMMERCIAL
+    # endpoint, which defeats the partition derived above for aws-us-gov and aws-cn.
+    role_arn = ensure_role(boto3.client("iam", region_name=region), account, bucket, partition)
+    src_key = upload_context(s3, bucket)
+    ensure_project(cb, role_arn, bucket, src_key, ecr_host)
+
+    build_id = cb.start_build(
+        projectName=PROJECT_NAME,
+        environmentVariablesOverride=[{"name": "IMAGE_TAG", "value": a.tag}],
+    )["build"]["id"]
+    print(f"\nstarted build {build_id}")
+    if a.write_config:
+        # Written NOW, not after the build: the URI is known in advance, and an interrupted wait must
+        # not leave config.local.yaml pointing at nothing. If the build fails, the deploy fails on an
+        # image pull, which is loud.
+        write_image_uri(uri)
+    print(f"  if this shell is interrupted: python3 scripts/build_image.py --status {build_id}"
+          + (" --write-config" if a.write_config else ""))
+    print("  phases (the base image is ~9 GB, so expect roughly 10-15 minutes):")
+    if not wait_for(cb, build_id, region):
+        return 1
+
+    print(f"\nImage: {uri}")
     return 0
 
 
