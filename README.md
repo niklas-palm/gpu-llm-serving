@@ -61,7 +61,8 @@ certificate, or hosted zone needed. See [Access](#access) for the one limit.
 - Permissions to create: CloudFormation, EC2, ECS, ELB, ECR, S3, CodeBuild, Secrets Manager, CloudFront,
   and IAM, including `iam:CreateRole`, `iam:PutRolePolicy` **and `iam:PassRole`** (the scripts create a
   CodeBuild service role and pass it)
-- Node.js (for the CDK CLI) and Python 3.11+
+- Node.js 20 or 22 LTS (for the CDK CLI; newer majors work but jsii warns) and Python 3.11 or 3.12.
+  `requirements.txt` pins exact versions; loosen them if you must, but they are what was tested
 - A virtualenv; system and Homebrew Python refuse `pip install` without one:
   `python3 -m venv .venv && source .venv/bin/activate`
 
