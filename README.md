@@ -349,9 +349,7 @@ the ASG reports the reason within seconds, but CloudFormation keeps waiting on t
 an hour before it gives up.
 
 ```bash
-REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
-[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
-print(c['region'])")
+REGION=eu-west-2        # the region in your config
 ASG=$(aws autoscaling describe-auto-scaling-groups --region "$REGION" \
   --query 'AutoScalingGroups[?starts_with(AutoScalingGroupName,`GpuLlmServing`)].AutoScalingGroupName|[0]' --output text)
 aws autoscaling describe-scaling-activities --region "$REGION" --auto-scaling-group-name "$ASG" \
