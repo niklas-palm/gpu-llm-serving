@@ -161,6 +161,10 @@ class ServingStack(Stack):
         else:
             vpc_kwargs["max_azs"] = 4
         vpc = ec2.Vpc(self, "Vpc", **vpc_kwargs)
+        # Image layers come from S3 (ECR stores them there). Without this, every pull of the ~8 GB
+        # image on every new instance crosses the NAT gateway at data-processing rates. The gateway
+        # endpoint is free. Model weights come from Hugging Face and still use the NAT.
+        vpc.add_gateway_endpoint("S3", service=ec2.GatewayVpcEndpointAwsService.S3)
 
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
