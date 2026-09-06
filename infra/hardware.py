@@ -434,13 +434,8 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     # choose". Both measured no effect across the range worth testing, so a wrong guess is more
     # likely to hurt than the default is.
     for key in ("maxModelLen", "maxNumBatchedTokens"):
-        if _num(t.get(key, 0), key) < 0:
-            raise ConfigError(f"{key} must be 0 (engine default) or a positive integer.")
-        t[key] = _num(t[key], key)
-
-    if _num(t.get("maxNumSeqs", 0), "maxNumSeqs") < 1:
-        raise ConfigError("maxNumSeqs must be a positive integer.")
-    t["maxNumSeqs"] = _num(t["maxNumSeqs"], "maxNumSeqs")
+        t[key] = _num(t[key], key, minimum=0)
+    t["maxNumSeqs"] = _num(t["maxNumSeqs"], "maxNumSeqs", minimum=1)
 
     kv = str(t.get("kvCacheDtype") or "auto")
     if kv not in KV_CACHE_DTYPES:

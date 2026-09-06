@@ -91,12 +91,7 @@ def check_chat(url: str, key: str, model: str) -> bool:
 
 
 def check_streaming(url: str, key: str, model: str) -> None:
-    """Streaming on the Responses API, which is the primary interface here.
-
-    Parses both event shapes, so the same check works against Chat Completions too: the Responses API
-    emits `{"type": "response.output_text.delta", "delta": "..."}` while Chat Completions nests the
-    text under `choices[].delta.content`.
-    """
+    """Streaming on the Responses API: text arrives as `response.output_text.delta` events."""
     t0 = time.perf_counter()
     first = None
     chunks = 0
@@ -114,11 +109,6 @@ def check_streaming(url: str, key: str, model: str) -> None:
                 except json.JSONDecodeError:
                     continue
                 piece = d.get("delta") if isinstance(d.get("delta"), str) else None
-                if piece is None:
-                    for ch in d.get("choices") or []:
-                        piece = (ch.get("delta") or {}).get("content")
-                        if piece:
-                            break
                 if piece:
                     if first is None:
                         first = time.perf_counter() - t0
