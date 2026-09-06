@@ -329,30 +329,6 @@ def write_image_uri(uri: str) -> None:
         with open(path) as fh:
             lines = [ln for ln in fh.read().splitlines()
                      if not ln.startswith("image:")]
-    else:
-        lines = header.rstrip("\n").split("\n")
-    lines.append(f"image: {uri}")
-    with open(path, "w") as fh:
-        fh.write("\n".join(lines) + "\n")
-    print(f"wrote image into {os.path.basename(path)} (gitignored)")
-    else:
-    print("\nAdd it to config.local.yaml (gitignored, merged over config.yaml):\n"
-          f"  image: {uri}\n"
-          "Or export it for one deploy:\n"
-          f"  export SERVING_IMAGE={uri}")
-
-    # The tag is FIXED, so rebuilding pushes a new image to the same URI. The task definition's image
-    # string is then unchanged, CloudFormation sees no diff, and `cdk deploy` does nothing - the old
-    # image keeps serving and the change appears to have been ignored. Forcing a new deployment is what
-    # makes ECS pull the tag again.
-    print("\nAlready deployed? The tag is unchanged, so `cdk deploy` will see no difference and the\n"
-      "running tasks keep the OLD image. Force ECS to pull it again:\n"
-      f"  CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region {region} \\\n"
-      "    --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)\n"
-      f"  SERVICE=$(aws ecs list-services --cluster \"$CLUSTER\" --region {region} \\\n"
-      "    --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')\n"
-      f"  aws ecs update-service --cluster \"$CLUSTER\" --service \"$SERVICE\" --region {region} \\\n"
-      "    --force-new-deployment")
 
 
 def main() -> int:
@@ -422,6 +398,29 @@ def main() -> int:
         return 1
 
     print(f"\nImage: {uri}")
+    if not a.write_config:
+            lines = header.rstrip("\n").split("\n")
+        lines.append(f"image: {uri}")
+        with open(path, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"wrote image into {os.path.basename(path)} (gitignored)")
+        else:
+        print("\nAdd it to config.local.yaml (gitignored, merged over config.yaml):\n"
+              f"  image: {uri}\n"
+              "Or export it for one deploy:\n"
+              f"  export SERVING_IMAGE={uri}")
+    # The tag is FIXED, so rebuilding pushes a new image to the same URI. The task definition's image
+    # string is then unchanged, CloudFormation sees no diff, and `cdk deploy` does nothing - the old
+    # image keeps serving and the change appears to have been ignored. Forcing a new deployment is what
+    # makes ECS pull the tag again.
+    print("\nAlready deployed? The tag is unchanged, so `cdk deploy` will see no difference and the\n"
+      "running tasks keep the OLD image. Force ECS to pull it again:\n"
+      f"  CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region {region} \\\n"
+      "    --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)\n"
+      f"  SERVICE=$(aws ecs list-services --cluster \"$CLUSTER\" --region {region} \\\n"
+      "    --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')\n"
+      f"  aws ecs update-service --cluster \"$CLUSTER\" --service \"$SERVICE\" --region {region} \\\n"
+      "    --force-new-deployment")
     return 0
 
 
