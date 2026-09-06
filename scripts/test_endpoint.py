@@ -68,7 +68,8 @@ def check_responses(url: str, key: str, model: str) -> bool:
                 text += c.get("text") or ""
         text = text or d.get("output_text") or ""
     print(f"  /v1/responses           HTTP {r.status_code}  {text.strip()[:60]!r}")
-    return r.ok
+    # A 200 with no text is not serving: a captive portal or a misrouted proxy answers 200 to anything.
+    return r.ok and bool(text.strip())
 
 
 def check_chat(url: str, key: str, model: str) -> bool:
@@ -86,7 +87,7 @@ def check_chat(url: str, key: str, model: str) -> bool:
         message = choices[0].get("message") or {}
         text = message.get("content") or message.get("reasoning_content") or ""
     print(f"  /v1/chat/completions    HTTP {r.status_code}  {text.strip()[:60]!r}")
-    return r.ok
+    return r.ok and bool(text.strip())
 
 
 def check_streaming(url: str, key: str, model: str) -> None:
@@ -180,12 +181,17 @@ def main() -> int:
         print("\nEndpoint is not healthy. See docs/troubleshooting.md.")
         return 1
 
-    model = check_models(url, a.key)
-    has_responses = check_responses(url, a.key, model)
-    ok_chat = check_chat(url, a.key, model)
-    check_streaming(url, a.key, model)
-    if a.concurrency > 1:
-        check_concurrency(url, a.key, model, a.concurrency)
+    try:
+        model = check_models(url, a.key)
+        has_responses = check_responses(url, a.key, model)
+        ok_chat = check_chat(url, a.key, model)
+        check_streaming(url, a.key, model)
+        if a.concurrency > 1:
+            check_concurrency(url, a.key, model, a.concurrency)
+    except requests.RequestException as e:
+        # After a passing /health a transient timeout is a result, not a crash.
+        print(f"\nEndpoint stopped answering mid-test: {type(e).__name__}. See docs/troubleshooting.md.")
+        return 1
 
     print()
     if has_responses:

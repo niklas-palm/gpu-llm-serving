@@ -89,9 +89,21 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
                                              a.seconds, a.shared_prefix, q)) for n in per_proc if n]
     for p in procs:
         p.start()
-    results = [q.get() for _ in procs]
+    # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level plus the
+    # per-request timeout bounds how long a healthy worker can take.
+    results = []
+    for _ in procs:
+        try:
+            results.append(q.get(timeout=a.seconds + 330))
+        except Exception:                                   # noqa: BLE001 - queue.Empty
+            print("  a load process did not report; its share is missing from this level",
+                  file=sys.stderr)
     for p in procs:
-        p.join(timeout=30)
+        p.join(timeout=5)
+        if p.is_alive():
+            p.terminate()
+    if not results:
+        sys.exit("no load process reported; is the endpoint reachable?")
 
     wall = max(r["wall"] for r in results)
     ok = sum(r["ok"] for r in results)
@@ -109,9 +121,17 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
 
 
 def served_model(url: str, key: str) -> str:
-    r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-    r.raise_for_status()
-    return r.json()["data"][0]["id"]
+    r = None
+    try:
+        r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+        models = [m["id"] for m in r.json().get("data", [])] if r.ok else []
+    except (requests.RequestException, ValueError):
+        models = []
+    if not models:
+        status = r.status_code if r is not None else "unreachable"
+        body = r.text[:200] if r is not None else ""
+        sys.exit(f"could not read /v1/models ({status}); check the endpoint and the key. Response: {body!r}")
+    return models[0]
 
 
 def main() -> int:
@@ -131,8 +151,11 @@ def main() -> int:
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
 
-    model = served_model(a.url, a.key)
     levels = [int(x) for x in a.concurrency.split(",") if x.strip()]
+    if not levels or min(levels) < 1 or a.processes < 1 or a.seconds <= 0:
+        sys.exit("--concurrency needs one or more levels of at least 1, --processes at least 1, "
+                 "--seconds above 0")
+    model = served_model(a.url, a.key)
     print(f"model {model}\n{a.input_tokens} input / {a.output_tokens} output tokens, "
           f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts, {a.seconds:g}s per level "
           f"after {a.warmup_seconds:g}s warm-up, {a.processes} client processes\n")
@@ -166,4 +189,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        # Without this, Ctrl-C printed one traceback per worker and waited for the level to finish.
+        for p in mp.active_children():
+            p.terminate()
+        print("\ninterrupted.", file=sys.stderr)
+        sys.exit(130)
