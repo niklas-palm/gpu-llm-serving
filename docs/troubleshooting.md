@@ -441,7 +441,7 @@ aws logs tail "$LOG_GROUP" --since 1h --region "$REGION" | grep -iE "kv.cache|gp
 GiB through the NAT gateway; later tasks and restarts on that instance hit the shared host cache.
 
 **Cause B: the root volume is throttling.** At the gp3 default of 125 MB/s, a 57 GiB model takes ~8
-minutes to stage. This project provisions 500 MB/s. Check:
+minutes to read. This project provisions 500 MB/s. Check:
 
 ```bash
 aws ec2 describe-volumes --filters Name=attachment.instance-id,Values=<id> --region "$REGION" \

@@ -554,66 +554,23 @@ minutes (see [Notes](#notes-and-limitations)). To stop paying, scale to zero.
 
 ### Scale to zero without tearing down
 
-Removes all GPU cost while keeping the stack, endpoint and configuration.
+Removes all GPU cost while keeping the stack, endpoint and configuration:
 
-**Two ways, differing in durability.** Set **both** `instanceCount: 0` and `maxInstanceCount: 0` in
-config and deploy: the empty fleet is in the template, so it survives. The CLI commands below are
-**drift**: the next `cdk deploy`, even a doc-only one, re-establishes `MinSize`, `DesiredCount` and the
-autoscaling floor from the template and the fleet comes back. Use the CLI for a pause under an hour; use
-config for anything longer.
-
-Both values: `instanceCount: 0` with the shipped `maxInstanceCount: 24` leaves autoscaling in charge of a
-fleet it can never grow (no tasks, so no request-rate metric), and `MaxSize` stays above zero so the
-deploy never lowers capacity. Synth rejects that combination.
-
-```bash
-REGION=$(python3 -c "import yaml,os;c=yaml.safe_load(open('config.yaml'));\
-[c.update(yaml.safe_load(open(p)) or {}) for p in ['config.local.yaml'] if os.path.exists(p)];\
-print(c['region'])")   # reads config.local.yaml too, so it matches the deployment
-CLUSTER=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`ClusterName`].OutputValue' --output text)
-ASG=$(aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION" \
-  --query 'Stacks[0].Outputs[?OutputKey==`AsgName`].OutputValue' --output text)
-SERVICE=$(aws ecs list-services --cluster "$CLUSTER" --region "$REGION" \
-  --query 'serviceArns[0]' --output text | awk -F/ '{print $NF}')
-
-# 1. FIRST drop the autoscaling floor. Skipping this undoes the next step.
-aws application-autoscaling register-scalable-target --region "$REGION" \
-  --service-namespace ecs --resource-id "service/$CLUSTER/$SERVICE" \
-  --scalable-dimension ecs:service:DesiredCount --min-capacity 0 --max-capacity 8
-
-# 2. Then the service.
-aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --region "$REGION" \
-  --desired-count 0
-
-# 3. Then the Auto Scaling Group.
-aws autoscaling update-auto-scaling-group --region "$REGION" \
-  --auto-scaling-group-name "$ASG" --min-size 0 --desired-capacity 0
+```yaml
+# config.local.yaml
+instanceCount: 0
+maxInstanceCount: 0
 ```
 
-**The order matters, and step 1 is not optional when autoscaling is enabled.** With
-`maxInstanceCount > instanceCount` there is a scalable target whose `MinCapacity` is your
-`instanceCount`, and Application Auto Scaling enforces it: set the service to 0 while the floor is 6 and
-it is pushed straight back to 6.
+Deploy. The empty fleet is then what the template says, so it survives later deploys. Instances are gone
+about **5 minutes** after the deploy finishes (the termination hook drains each one first). Both values
+must be zero; zeroing only one is rejected at synth, because autoscaling would otherwise hold the floor.
 
-Instances are gone about **5 minutes** after the deploy finishes: the termination hook drains each one
-first (automatic scale-in by comparison: 45–60 minutes).
+To come back, restore the counts and deploy again; allow several minutes for the model to load.
 
-To restore, reverse all three, **including the floor**, or autoscaling stays pinned at a minimum of 0.
-Substitute your own `instanceCount` and `maxInstanceCount` for the 6 and 8. `--min-size` must match
-`instanceCount`, or the ASG is left drifted and the next deploy moves it again:
-
-```bash
-aws autoscaling update-auto-scaling-group --region "$REGION" \
-  --auto-scaling-group-name "$ASG" --min-size 6 --desired-capacity 6
-aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --region "$REGION" \
-  --desired-count 6
-aws application-autoscaling register-scalable-target --region "$REGION" \
-  --service-namespace ecs --resource-id "service/$CLUSTER/$SERVICE" \
-  --scalable-dimension ecs:service:DesiredCount --min-capacity 6 --max-capacity 8
-```
-
-Scaling back up pulls the image and reloads the model; allow several minutes.
+Do not scale to zero with the CLI instead. Anything set that way is drift: the next `cdk deploy`, even a
+doc-only one, restores the template's counts and the fleet comes back. If you did, and it came back, see
+*you scaled the service to zero and it came back* in [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ### Full teardown
 
@@ -719,7 +676,7 @@ infra/
   serving_stack.py        VPC, ECS, GPU capacity provider, ALB, CloudFront, service, dashboard
 container/
   Dockerfile              vLLM base image plus the entrypoint
-  serve                   entrypoint: stage weights, translate config to engine flags
+  serve                   entrypoint: translate config to engine flags
 scripts/
   build_image.py          build and push to ECR, via CodeBuild
   endpoint_info.py        print the endpoint, key and a ready-to-paste request
