@@ -118,6 +118,20 @@ aws service-quotas request-service-quota-increase --region <region> \
 
 Requests of roughly +50% over the current value are most likely to be approved automatically.
 
+### Check for capacity
+
+Quota and offerings say what you are allowed to launch, not what exists right now. On-demand g7e has had
+no capacity in whole regions for hours at a time, and nothing tells you in advance. Spot has a signal:
+
+```bash
+aws ec2 get-spot-placement-scores --region <region> --region-names <region> \
+  --instance-types g7e.2xlarge --target-capacity 6 --single-availability-zone \
+  --query 'SpotPlacementScores[].[AvailabilityZoneId,Score]' --output text     # 10 is best, 1 is none
+```
+
+For on-demand there is no such API; the only test is a launch. Deploy step 3 shows how to read the
+answer within minutes rather than after CloudFormation's hour-long wait.
+
 ### Check the instance type exists where you are deploying
 
 g7e is not in every region:
