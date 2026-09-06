@@ -10,7 +10,7 @@ PORT="${PORT:-8080}"
 # /opt/model is a HOST directory shared by every task on this instance (see the task definition), so
 # one copy of the weights is reused across restarts and across replicas. That is what stops a
 # crash-looping task filling the disk with a fresh copy per attempt.
-SHARED_CACHE=/opt/model
+SHARED_CACHE="${SHARED_CACHE:-/opt/model}"
 mkdir -p "${SHARED_CACHE}"
 
 # Point the Hugging Face cache at the shared volume before anything can download. Without these, the
@@ -52,9 +52,18 @@ fi
 
 # Escape hatch for any flag this script does not model. Keeps the container useful without a rebuild
 # every time you want to try something.
-if [[ -n "${EXTRA_ARGS:-}" ]]; then
+if [[ -n "${EXTRA_ARGS// /}" ]]; then
   # shlex, not shell word-splitting: quoted arguments with spaces survive, and a * is not a glob.
-  mapfile -t EXTRA < <(python3 -c 'import shlex, sys; print("\n".join(shlex.split(sys.argv[1])))' "${EXTRA_ARGS}")
+  # NUL-separated so a newline inside a quoted value stays inside it; a value shlex cannot parse
+  # stops the start, because silently starting without the flags is how a fix appears not to work.
+  # Through a file, not a variable: bash variables cannot hold NUL.
+  EXTRA_FILE=$(mktemp)
+  if ! python3 -c 'import shlex, sys; sys.stdout.write("\0".join(shlex.split(sys.argv[1])))' "${EXTRA_ARGS}" > "${EXTRA_FILE}"; then
+    echo "[serve] extraArgs is not shell-parseable: ${EXTRA_ARGS}" >&2
+    exit 1
+  fi
+  mapfile -d '' -t EXTRA < "${EXTRA_FILE}"
+  rm -f "${EXTRA_FILE}"
   ARGS+=("${EXTRA[@]}")
 fi
 

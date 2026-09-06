@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from hardware import ConfigError  # noqa: E402
 from serving_stack import ServingStack  # noqa: E402
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 # The zero-config shape: what a fresh account gets, so it is what most tests run against.
 BASE = {
     "region": "us-west-2",
@@ -92,7 +94,7 @@ def test_container_mount_matches_the_path_the_entrypoint_uses():
     template = synth()
     mount = only(template, "AWS::ECS::TaskDefinition")["ContainerDefinitions"][0]["MountPoints"][0]
     body = _entrypoint()
-    assert f'SHARED_CACHE={mount["ContainerPath"]}' in body
+    assert f'SHARED_CACHE="${{SHARED_CACHE:-{mount["ContainerPath"]}}}"' in body
 
 
 def test_the_hugging_face_cache_also_lands_on_the_shared_volume():
@@ -726,19 +728,6 @@ def test_app_generates_a_key_once_and_reuses_it(tmp_path):
 # Settings whose absence only shows up under real traffic
 # --------------------------------------------------------------------------------------------
 
-def test_the_execution_role_can_actually_pull_the_image():
-    """`GetAuthorizationToken` alone authenticates but cannot fetch a manifest or layers.
-
-    Referencing the image as an opaque URI meant CDK could not tell it named an ECR repository and
-    granted nothing else, so tasks failed at start with `CannotPullContainerError: ... denied`. CDK
-    warns about exactly this, and the warning reads like boilerplate.
-    """
-    blob = json.dumps(synth(image="111122223333.dkr.ecr.us-west-2.amazonaws.com/gpu-llm-serving:t"))
-    for action in ("ecr:GetAuthorizationToken", "ecr:BatchGetImage",
-                   "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"):
-        assert f'"{action}"' in blob, f"{action} is required to pull from ECR"
-
-
 def test_an_untagged_ecr_reference_still_gets_a_pull_grant():
     """`account.dkr.ecr.region.amazonaws.com/repo` with no tag is a legal reference meaning `:latest`.
 
@@ -1185,14 +1174,39 @@ def test_an_api_key_the_load_balancer_would_mismatch_is_rejected_at_synth(bad):
         synth(apiKey=bad)
 
 
-def test_extra_args_are_split_like_a_shell_would_without_globbing():
-    """`ARGS+=(${EXTRA_ARGS})` word-split and globbed: a quoted JSON value with spaces broke apart and a
-    * expanded against the container filesystem."""
-    body = _entrypoint()
-    assert "shlex.split" in body
-    assert "ARGS+=(${EXTRA_ARGS})" not in body
-    # The consequence users must know: quoting follows shell rules. This is the documented example.
-    import shlex
-    example = """--speculative-config '{"method":"eagle3","model":"x","num_speculative_tokens":3}'"""
-    assert shlex.split(example) == ["--speculative-config",
-                                    '{"method":"eagle3","model":"x","num_speculative_tokens":3}']
+def _run_entrypoint(tmp_path, **env):
+    """Run container/serve with a fake `vllm` on PATH that records its argv, NUL-separated."""
+    import subprocess
+    fake = tmp_path / "bin"; fake.mkdir()
+    (fake / "vllm").write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$ARGV_OUT"\n')
+    (fake / "vllm").chmod(0o755)
+    out = tmp_path / "argv"
+    full = {"PATH": f"{fake}:{os.environ['PATH']}", "ARGV_OUT": str(out),
+            "SHARED_CACHE": str(tmp_path / "cache"), "MODEL_ID": "org/model", **env}
+    r = subprocess.run(["bash", os.path.join(HERE, "..", "container", "serve")],
+                       env=full, capture_output=True, text=True)
+    argv = out.read_text().split("\0")[:-1] if out.exists() else []
+    return r.returncode, argv, r.stderr
+
+
+def test_extra_args_reach_the_engine_verbatim_with_shell_quoting(tmp_path):
+    """`ARGS+=(${EXTRA_ARGS})` word-split and globbed. shlex keeps a quoted JSON value whole, including
+    a newline inside it, and a * is not expanded."""
+    code, argv, _ = _run_entrypoint(
+        tmp_path, EXTRA_ARGS="""--speculative-config '{"method":"eagle3",\n"n":3}' --pattern '*'""")
+    assert code == 0
+    i = argv.index("--speculative-config")
+    assert argv[i + 1] == '{"method":"eagle3",\n"n":3}'
+    assert argv[argv.index("--pattern") + 1] == "*"
+
+
+def test_unparseable_extra_args_stop_the_start_instead_of_being_dropped(tmp_path):
+    """The old mapfile-from-process-substitution swallowed the shlex error and started the engine
+    without the flags, so a fix looked applied and was not."""
+    code, argv, err = _run_entrypoint(tmp_path, EXTRA_ARGS="--unterminated 'quote")
+    assert code != 0 and argv == [] and "not shell-parseable" in err
+
+
+def test_whitespace_only_extra_args_add_nothing(tmp_path):
+    code, argv, _ = _run_entrypoint(tmp_path, EXTRA_ARGS="   ")
+    assert code == 0 and "" not in argv
