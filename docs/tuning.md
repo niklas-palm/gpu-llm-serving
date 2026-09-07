@@ -753,8 +753,10 @@ mismatch fails at startup.
 The same flag on a different family, the 120B MXFP4 mixture-of-experts with its publisher's EAGLE-3 draft
 (`nvidia/gpt-oss-120b-Eagle3-v3`): mean acceptance 2.5, long answers (1,000 in / 800 out) **31.8
 against 19.1 req/s at 512 in flight (+66%)**, 97 against 65 tokens/s per request at 64, the mixed shape
-+43%. Speculation is worth most where decode dominates, and it needs a longer warm-up than plain
-serving before its numbers settle (*Choosing a model to host*, point 12).
++43%. On the reference shape the picture inverts with batch size: +44% at 8 in flight per engine, +47% at
+16, +8% at 32 with a heavy tail (p95 23 s), and −27% at 64. Speculation buys per-request speed with
+verification compute; once the batch saturates the GPU there is none to spare (*Choosing a model to
+host*, point 9).
 
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
 and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
@@ -824,11 +826,13 @@ driven from an in-region client. At 512 in flight, whole fleet:
    the first removed the long-prompt fault and was faster, but engines still died on cached prompts;
    both together ran clean at a 30 to 40% throughput cost. `extraEnv` exists for this. Judge such a
    model by whether it survives the 4,000-token shape at 64 per engine, not by its first rows.
-9. **Speculative decoding is the biggest decode lever, and it is conditional.** An EAGLE-3 draft on the
-   120B MXFP4 model: mean acceptance 2.5 of 3 drafted tokens, +66% on long answers at 512 in flight,
-   +43% on the mixed shape, +47% on the reference shape at 128. It costs verification compute, so the
-   gain shrinks as the batch saturates the GPU, and the draft must match the target checkpoint. Warm
-   the engine longer than usual before measuring it (below).
+9. **Speculative decoding is the biggest decode lever, and it is conditional on batch size.** An
+   EAGLE-3 draft on the 120B MXFP4 model, mean acceptance 2.5 of 3 drafted tokens: on the reference
+   shape +44% at 8 per engine, +47% at 16, +8% at 32 with a p95 of 23 s against 6 s, and **−27% at 64
+   per engine**. On long answers +66% even at 64 per engine. Verifying drafts costs compute the GPU no
+   longer has once the batch saturates it, so speculation is a latency tool for fleets run at moderate
+   concurrency, and a loss for a fleet run at its throughput knee. The draft must match the target
+   checkpoint. Measured after a four-minute warm-up; the tail above is not a warm-up effect.
 10. **A faster GPU pays in proportion to how bandwidth-bound the model is.** The same matrix on eight
     H100 80 GB (one `p5.48xlarge`, spot ~$20/h) against the eight g7e.2xlarge: +26% on the fp8
     mixture-of-experts, +82% on it in bf16, +70% on the dense 27B in fp8, +124% on the dense 27B in
