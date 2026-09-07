@@ -471,15 +471,20 @@ class ServingStack(Stack):
         # timeout resets on every byte. The one limit it imposes is on answers that do NOT stream: the
         # whole response must arrive within CLOUDFRONT_READ_TIMEOUT_S or the caller gets a 504 while
         # the engine is still happily generating. docs/tuning.md covers what that means for sizing.
+        # Account-wide name, like the dashboard: a second region with CDK's default name failed with
+        # "another vpc origin with the same name already exists". CloudFront refuses to change the name
+        # of a VPC origin a distribution is using (409), so a deployment created before the region was
+        # added to the name keeps its old name through `vpcOriginName`. docs/troubleshooting.md.
+        vpc_origin_name = str(_given(cfg.get("vpcOriginName"), "")).strip() or f"{self.stack_name}-{self.region}"
+        if len(vpc_origin_name) > 64:
+            raise ConfigError(f"vpcOriginName must be at most 64 characters (got {len(vpc_origin_name)}).")
         distribution = cloudfront.Distribution(
             self, "Cdn",
             comment=f"{self.stack_name}: HTTPS front door for the inference endpoint",
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.VpcOrigin.with_application_load_balancer(
                     alb,
-                    # Account-wide name, like the dashboard: a second region with CDK's default name
-                    # failed with "another vpc origin with the same name already exists".
-                    vpc_origin_name=f"{self.stack_name}-{self.region}",
+                    vpc_origin_name=vpc_origin_name,
                     protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY,
                     http_port=80,
                     read_timeout=Duration.seconds(CLOUDFRONT_READ_TIMEOUT_S),

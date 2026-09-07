@@ -1229,3 +1229,14 @@ def test_a_redeploy_may_take_every_engine_down_rather_than_hang():
     service = only(synth(), "AWS::ECS::Service")
     assert service["DeploymentConfiguration"]["MinimumHealthyPercent"] == 0
     assert "DeploymentCircuitBreaker" not in service["DeploymentConfiguration"]
+
+
+def test_an_existing_deployment_can_keep_its_vpc_origin_name():
+    """Adding the region to the VPC origin name broke every upgrade from the published version:
+    CloudFront returns 409 for any change to a VPC origin a distribution uses, and the stack rolled
+    back. The override keeps the old name; the default stays unique per region."""
+    kept = only(synth(vpcOriginName="GpuLlmServingCdnOrigin1VpcOriginCBEC1CE7"), "AWS::CloudFront::VpcOrigin")
+    assert kept["VpcOriginEndpointConfig"]["Name"] == "GpuLlmServingCdnOrigin1VpcOriginCBEC1CE7"
+    assert only(synth(vpcOriginName="  "), "AWS::CloudFront::VpcOrigin")["VpcOriginEndpointConfig"]["Name"] == "T-us-west-2"
+    with pytest.raises(ConfigError, match="vpcOriginName"):
+        synth(vpcOriginName="x" * 65)

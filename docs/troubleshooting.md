@@ -83,6 +83,27 @@ aws cloudfront list-vpc-origins --query 'VpcOriginList.Items[].[Name,Status]' --
 
 ---
 
+## Symptom: `cdk deploy` fails with `409 ... VPC origin is currently associated with one or more distributions`
+
+You are upgrading a deployment created before 2026-09-06. The VPC origin's name gained the region
+(`<stack>-<region>`) so two regions can coexist in one account, and CloudFront refuses to change
+anything on a VPC origin while a distribution uses it. The stack rolls back before it touches the
+engines. Keep the old name:
+
+```bash
+aws cloudfront list-vpc-origins --query 'VpcOriginList.Items[].[Name,Status]' --output text
+```
+
+Put the name of your deployment's origin in `config.local.yaml` and deploy again:
+
+```yaml
+vpcOriginName: GpuLlmServingCdnOrigin1VpcOriginCBEC1CE7   # yours will differ
+```
+
+Fresh deployments never see this. Reproduced and fixed on a parked stack the same day.
+
+---
+
 ## Symptom: a first deploy sits in `CREATE_IN_PROGRESS` with tasks stopping
 
 The image cannot be pulled (the build failed after `--write-config` wrote the URI, or a Docker Hub pull

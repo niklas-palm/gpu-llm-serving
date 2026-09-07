@@ -31,6 +31,12 @@ region: us-west-2
 #   availabilityZones: ["us-east-2a", "us-east-2b"]
 availabilityZones: []
 
+# Optional. Name of the CloudFront VPC origin. Empty: <stack>-<region>, unique per region in the account.
+# Only for a deployment created before 2026-09-06, whose origin has CloudFront's generated name:
+# CloudFront will not rename an origin that a distribution uses, so set this to the existing name
+# (aws cloudfront list-vpc-origins) before upgrading. docs/troubleshooting.md, "409 ... VPC origin".
+vpcOriginName: ""
+
 # ---------------------------------------------------------------------------- fleet
 
 # g7e.2xlarge | 4xlarge | 8xlarge | 12xlarge | 24xlarge | 48xlarge. Same 96 GiB GPU in every size;
