@@ -63,7 +63,9 @@ instanceCount: 16
 # Autoscaling ceiling. Equal to instanceCount, or omitted, means a fixed fleet and no scaling policy.
 # To park: set this AND instanceCount to 0. Zeroing one of them is rejected at synth.
 # Autoscaling is burst insurance, not a saving: ~11 minutes to usable capacity, scale-in one step at a
-# time, and the instance outlives its task by ~15 minutes.
+# time, and the instance outlives its task by ~15 minutes. Headroom here also changes how a redeploy
+# behaves: with a spare instance ECS replaces engines one at a time; without, it takes them down for
+# the reload. README.md, "Changing the model, tuning or image later".
 # docs/tuning.md, "What autoscaling actually does, measured".
 maxInstanceCount: 24
 

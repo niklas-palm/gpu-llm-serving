@@ -1220,3 +1220,12 @@ def test_the_engine_never_blocks_on_logging_and_the_sidecar_restarts():
     assert vllm["LogConfiguration"]["Options"]["mode"] == "non-blocking"
     metrics = next(c for c in defs if c["Name"] == "metrics")
     assert metrics["RestartPolicy"]["Enabled"] is True
+
+
+def test_a_redeploy_may_take_every_engine_down_rather_than_hang():
+    """At the default MinimumHealthyPercent 100 a fixed fleet has no free GPU for the new engine, so a
+    deployment never placed a task and hung for hours. 0 lets ECS stop engines to make room; the README
+    documents the outage this costs and the headroom that avoids it."""
+    service = only(synth(), "AWS::ECS::Service")
+    assert service["DeploymentConfiguration"]["MinimumHealthyPercent"] == 0
+    assert "DeploymentCircuitBreaker" not in service["DeploymentConfiguration"]

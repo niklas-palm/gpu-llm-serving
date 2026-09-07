@@ -1018,9 +1018,10 @@ budget, not cost, is the case for enabling it.
 
 Two things about scale-in that are not obvious from the settings: the Auto Scaling group picks the
 instance to terminate by its own policy, not by which one is busiest, so a scale-in after a burst can
-drain a loaded engine while an idle one survives, and its replacement cold-starts elsewhere. And a
-redeploy is a full outage for the reload time, because with fully reserved GPUs no new task can be placed
-until an old one stops.
+drain a loaded engine while an idle one survives, and its replacement cold-starts elsewhere. And on a
+fixed fleet a redeploy takes engines down for the reload time, because with fully reserved GPUs no new
+task can be placed until an old one stops; with headroom ECS rolls instead. README.md, "Changing the
+model, tuning or image later" has the measurements and the choice.
 
 ---
 

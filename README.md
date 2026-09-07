@@ -375,10 +375,20 @@ aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region "$
 
 ### Changing the model, tuning or image later
 
-Edit the config and `cdk deploy` again. A change to the task definition replaces **every engine at
-once**: with one GPU per task the new task cannot start until the old one has released the GPU, so the
-endpoint returns 503 for the reload, five to fifteen minutes. Plan it, or run a second stack and move
-your gateway to it. Changes that touch only the fleet size, alarms or dashboard do not restart engines.
+Edit the config and `cdk deploy` again. Changes that touch only the fleet size, alarms or dashboard do
+not restart engines. A change to the task definition (model, tuning, image, extraArgs) restarts every
+engine, and how that plays out depends on whether the fleet has a spare GPU:
+
+| Fleet | What ECS does | Measured |
+|---|---|---|
+| Fixed (`maxInstanceCount` equal to `instanceCount`, the default shape) | No GPU is free, so it stops engines to make room: one first, the rest once that one is healthy. | 6 engines, same image: 5 healthy for 5 min, then 1 for 6 min, no full outage. 6 engines, new model: 0 healthy for 2 min, 503 for 5, back to full in 10. |
+| Headroom (`maxInstanceCount` above `instanceCount`, quota for one more instance) | The capacity provider adds an instance, new engines start there before old ones stop, one at a time. | Reported by a tester: ~24 min, no outage. Not measured here. |
+
+Pick by what you can afford: a fixed fleet redeploys in about a reload time but drops the endpoint for
+part of it; headroom keeps the endpoint up and costs an extra instance until the ~15-minute managed
+scale-in returns it. The deployment settings behind this are `min_healthy_percent=0` and the circuit
+breaker being off, both in `infra/serving_stack.py` with the reasons. A `minHealthyPercent` of 100 on a
+fixed fleet would never finish: no new engine can be placed until an old one stops.
 
 ### 4. Call it
 

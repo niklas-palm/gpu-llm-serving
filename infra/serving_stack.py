@@ -685,6 +685,12 @@ service:
             capacity_provider_strategies=[
                 ecs.CapacityProviderStrategy(capacity_provider=capacity_provider.capacity_provider_name,
                                              weight=1)],
+            # 0, because a redeploy on a fixed fleet has no free GPU to start the new engine on: at the
+            # default 100 the deployment could never place a task and hung until CloudFormation gave up
+            # hours later. At 0 ECS stops one engine, starts its replacement, then swaps the rest once
+            # it is healthy (measured: 5, then 1, healthy of 6 for ~11 minutes). With a spare instance
+            # (maxInstanceCount above instanceCount) the same setting rolls one engine at a time with
+            # none down. README.md, "Changing the model, tuning or image later".
             min_healthy_percent=0,
             # Circuit breaker OFF. Enabled, it reverts to the previous task definition
             # after repeated start failures - and on a single-service GPU deployment that revision is
