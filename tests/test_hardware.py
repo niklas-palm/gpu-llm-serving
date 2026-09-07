@@ -504,3 +504,24 @@ def test_token_band_edges_must_be_engine_bucket_edges_in_order():
                        ([True], "not one of"), (["1000"], "not one of"), ([1000.0], "not one of")]:
         with pytest.raises(ConfigError, match=match):
             validate_token_bands(bad, "promptTokenBands", DEFAULT_PROMPT_TOKEN_BANDS)
+
+
+def test_the_p5_entries_carry_their_own_gpu_and_size_against_it():
+    """VRAM and bandwidth were module constants for the one g7e GPU; an H100 has 80 GiB and 3,350 GB/s,
+    so a p5 must derive its topology, memory warning and decode ceiling from its own numbers."""
+    p5 = get_instance("p5.4xlarge")
+    assert (p5.gpu, p5.gpu_vram_gib, p5.total_vram_gib) == ("H100", 80, 80)
+    assert get_instance("p5.48xlarge").total_vram_gib == 640
+    assert derive_tensor_parallel(p5, model_bytes(30, 1.0)) == 1, "30B fp8 fits one H100"
+    assert derive_tensor_parallel(p5, model_bytes(30, 2.0)) == 1, "30B bf16 (56 GiB) fits inside 80 x 0.95 - 16"
+    with pytest.raises(ConfigError, match="does not fit on p5.4xlarge"):
+        derive_tensor_parallel(p5, model_bytes(70, 2.0))
+    assert derive_tensor_parallel(get_instance("p5.48xlarge"), model_bytes(70, 2.0)) == 4, "130 GiB over 60 GiB per GPU"
+    assert memory_pressure_warning(model_bytes(30, 2.0), _tuning(kvCacheDtype="fp8"), gpu_vram_gib=80), \
+        "56 GiB is more than half of an 80 GiB card, so the fp8-KV warning must fire there"
+    w = model_bytes(30, 1.0)
+    assert decode_ceiling_tokens_per_sec(w, 1, bandwidth_gbs=3350) == pytest.approx(
+        decode_ceiling_tokens_per_sec(w, 1) * 3350 / 1597, rel=0.01)
+    assert get_instance("g7e.2xlarge").gpu_vram_gib == 96, "g7e entries unchanged"
+    with pytest.raises(ConfigError, match="p5.48xlarge"):
+        get_instance("p4d.24xlarge")

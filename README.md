@@ -96,6 +96,7 @@ on-demand have separate quotas.**
 | `g7e.12xlarge` | 2 | 192 GiB | 48 | 512 GiB | yes, 1 |
 | `g7e.24xlarge` | 4 | 384 GiB | 96 | 1 TiB | **no**, needs 96 |
 | `g7e.48xlarge` | 8 | 768 GiB | 192 | 2 TiB | **no**, needs 192 |
+| `p5.4xlarge` / `p5.48xlarge` | 1 / 8 x H100 80 GiB | 80 GiB / 640 GiB | 16 / 192 | 256 GiB / 2 TiB | separate P quotas; for comparison runs, not the measured platform |
 
 The default fits 64 vCPU. Larger needs an increase a new account will not have.
 

@@ -145,7 +145,7 @@ class ServingStack(Stack):
               file=sys.stderr)
 
         warning = memory_pressure_warning(est_weight_bytes // tuning["tensorParallel"], tuning,
-                                          quantised=bytes_per_param < 2.0)
+                                          quantised=bytes_per_param < 2.0, gpu_vram_gib=inst.gpu_vram_gib)
         if warning:
             # stderr, because `cdk synth > template.yaml` is normal and stdout carries the template.
             print(f"\nWarning: {warning}\n", file=sys.stderr)

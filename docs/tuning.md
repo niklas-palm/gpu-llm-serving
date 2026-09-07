@@ -35,6 +35,10 @@ Two consequences:
 
 ## Choosing an instance type
 
+The catalog also knows `p5.4xlarge` and `p5.48xlarge` (H100 SXM, 80 GiB HBM3 at 3,350 GB/s, 1 and 8
+GPUs) so the same stack can be measured on Hopper; every figure in this document is g7e unless a table
+says otherwise, and NVFP4 checkpoints do not run on an H100.
+
 Every g7e size carries the same GPU: 96 GiB of VRAM at about 1,600 GB/s (the Server Edition runs its GDDR7
 at 25 Gbps; the 1,792 GB/s often quoted is the workstation card). Larger sizes add GPUs, vCPU
 and host RAM.

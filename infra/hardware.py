@@ -1,4 +1,4 @@
-"""The g7e instance catalog, everything derivable from it, and config validation.
+"""The instance catalog (g7e, and p5 for an H100 comparison), everything derivable from it, and config validation.
 
 This module makes no AWS calls, so it is fast and testable. It exists to stop the user having to get
 details right that follow mechanically from their instance choice, and to reject a bad configuration
@@ -8,7 +8,8 @@ Two facts drive most of what follows:
 
   * Every g7e size carries the SAME GPU - an NVIDIA RTX PRO 6000 Blackwell with 96 GiB of VRAM.
     Larger sizes add GPUs, vCPU and host RAM. So "which g7e" is a question about how many GPUs and
-    how much host RAM you need, never about GPU speed.
+    how much host RAM you need, never about GPU speed. The p5 entries carry a different GPU (H100,
+    80 GiB, 3,350 GB/s), so VRAM and bandwidth live on the instance, not in a constant.
 
   * VRAM and host RAM scale independently and the gap is wide. A g7e.2xlarge has 96 GiB of VRAM but
     only 64 GiB of host RAM. Any sizing that assumes host RAM tracks GPU memory will be wrong.
@@ -24,8 +25,8 @@ import math
 # 1,597, not 1,792: g7e carries the RTX PRO 6000 Blackwell SERVER Edition, whose GDDR7 runs at 25 Gbps
 # (nvidia-smi reports a 12,481 MHz memory clock, two bits per clock per pin) on a 512-bit bus. The 1,792
 # figure is the workstation card at 28 Gbps. The difference is 11% on every ceiling derived here.
-GPU_MEMORY_BANDWIDTH_GBS = 1597
-GPU_VRAM_GIB = 96
+GPU_MEMORY_BANDWIDTH_GBS = 1597   # g7e; the H100 in p5 is 3,350
+GPU_VRAM_GIB = 96                 # g7e; p5 is 80
 
 # Per-GPU VRAM that must stay free for something other than weights, when deciding how many GPUs a
 # model needs. Three things share it: peak activations (measured ~5.7 GiB for a 30B on this card),
@@ -57,10 +58,13 @@ class Instance:
     gpus: int
     vcpu: int
     host_mem_gib: int
+    gpu: str = "RTX PRO 6000 Blackwell"
+    gpu_vram_gib: int = GPU_VRAM_GIB
+    gpu_bandwidth_gbs: int = GPU_MEMORY_BANDWIDTH_GBS
 
     @property
     def total_vram_gib(self) -> int:
-        return self.gpus * GPU_VRAM_GIB
+        return self.gpus * self.gpu_vram_gib
 
     @property
     def vcpu_per_gpu(self) -> float:
@@ -103,6 +107,10 @@ INSTANCES: dict[str, Instance] = {
     "g7e.12xlarge": Instance("g7e.12xlarge", gpus=2, vcpu=48,  host_mem_gib=512),
     "g7e.24xlarge": Instance("g7e.24xlarge", gpus=4, vcpu=96,  host_mem_gib=1024),
     "g7e.48xlarge": Instance("g7e.48xlarge", gpus=8, vcpu=192, host_mem_gib=2048),
+    # H100 SXM (80 GiB HBM3, 3,350 GB/s). For comparison runs; every number in the docs is g7e.
+    # NVFP4 checkpoints need Blackwell and do not run here; fp8 and bf16 do.
+    "p5.4xlarge":   Instance("p5.4xlarge",   gpus=1, vcpu=16,  host_mem_gib=256,  gpu="H100", gpu_vram_gib=80, gpu_bandwidth_gbs=3350),
+    "p5.48xlarge":  Instance("p5.48xlarge",  gpus=8, vcpu=192, host_mem_gib=2048, gpu="H100", gpu_vram_gib=80, gpu_bandwidth_gbs=3350),
 }
 
 
@@ -113,16 +121,15 @@ class ConfigError(ValueError):
 def get_instance(name: str) -> Instance:
     """Look up an instance type, rejecting anything outside the supported family.
 
-    Restricted to g7e on purpose. The whole configuration - driver requirements, memory sizing,
-    tuning defaults - is calibrated for this GPU, and silently accepting another family would
-    produce a deployment that looks fine and performs nothing like the documentation says.
+    Restricted to the catalog on purpose. Memory sizing and the tuning defaults are calibrated per
+    GPU, and silently accepting an unknown type would produce a deployment that looks fine and
+    performs nothing like the documentation says.
     """
     if name in INSTANCES:
         return INSTANCES[name]
     raise ConfigError(
-        f"Unsupported instanceType {name!r}. This project supports the g7e family only:\n"
-        + "\n".join(f"    {i.name:<14} {i.gpus} GPU"
-                    f"{'s' if i.gpus > 1 else ' '}  {i.total_vram_gib:>4} GiB VRAM  "
+        f"Unsupported instanceType {name!r}. This project knows these types:\n"
+        + "\n".join(f"    {i.name:<14} {i.gpus} x {i.gpu:<24} {i.total_vram_gib:>4} GiB VRAM  "
                     f"{i.vcpu:>3} vCPU  {i.host_mem_gib:>4} GiB RAM"
                     for i in INSTANCES.values())
         + "\n  See docs/tuning.md for how to choose."
@@ -212,7 +219,7 @@ def derive_tensor_parallel(inst: Instance, weight_bytes: int,
     # defaulted argument, and below about 0.167 the budget goes negative - at which point no degree
     # fits and the error blames the model rather than the setting.
     util = _num(gpu_memory_utilization, "gpuMemoryUtilization", float, minimum=0.20)
-    usable_per_gpu = GPU_VRAM_GIB * 1024**3 * util - WORKING_RESERVE_BYTES
+    usable_per_gpu = inst.gpu_vram_gib * 1024**3 * util - WORKING_RESERVE_BYTES
     for tp in (1, 2, 4, 8):
         if tp > inst.gpus:
             break
@@ -221,7 +228,7 @@ def derive_tensor_parallel(inst: Instance, weight_bytes: int,
     budget = max(usable_per_gpu, 0) / 1024**3
     raise ConfigError(
         f"A {weight_bytes / 1024**3:.1f} GiB model does not fit on {inst.name}.\n"
-        f"  {inst.gpus} x {GPU_VRAM_GIB} GiB card(s), of which the engine claims "
+        f"  {inst.gpus} x {inst.gpu_vram_gib} GiB card(s), of which the engine claims "
         f"{util:.0%} (`gpuMemoryUtilization`), less "
         f"{WORKING_RESERVE_BYTES / 1024**3:.0f} GiB per GPU for activations, CUDA graphs and a usable\n"
         f"  KV cache: {budget:.1f} GiB per GPU, {budget * inst.gpus:.1f} GiB across "
@@ -528,7 +535,7 @@ def resolve_topology(inst: Instance, tuning: dict, weight_bytes: int) -> dict:
 
 
 def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
-                            quantised: bool = False) -> str | None:
+                            quantised: bool = False, gpu_vram_gib: int = GPU_VRAM_GIB) -> str | None:
     """Flag the one configuration combination known to start cleanly and then fail under load.
 
     Unquantised weights plus an fp8 KV cache at high utilisation runs out of VRAM once traffic
@@ -558,7 +565,7 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
     # mechanism does not care WHY the VRAM is full. A 30B in fp8 sits at 29% and never warns; a 70B in
     # fp8 sits at 68% and does, correctly - it has the same footprint as an unquantised 35B, and
     # exempting it was how the earlier version turned this gate into dead code.
-    if weight_bytes_per_gpu < 0.50 * GPU_VRAM_GIB * 1024**3:
+    if weight_bytes_per_gpu < 0.50 * gpu_vram_gib * 1024**3:
         return None
     weights = "quantised" if quantised else "unquantised"
     return (
@@ -575,8 +582,8 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
     )
 
 
-def decode_ceiling_tokens_per_sec(weight_bytes: int, tp: int,
-                                  active_fraction: float = 1.0) -> float:
+def decode_ceiling_tokens_per_sec(weight_bytes: int, tp: int, active_fraction: float = 1.0,
+                                  bandwidth_gbs: int = GPU_MEMORY_BANDWIDTH_GBS) -> float:
     """Upper bound on output tokens/sec for ONE request, from memory bandwidth alone.
 
     Generating a token requires reading the activated weights out of VRAM, so this is a hard
@@ -593,4 +600,4 @@ def decode_ceiling_tokens_per_sec(weight_bytes: int, tp: int,
     bytes_per_token_per_gpu = weight_bytes * active_fraction / tp
     if bytes_per_token_per_gpu <= 0:
         return 0.0
-    return GPU_MEMORY_BANDWIDTH_GBS * 1e9 / bytes_per_token_per_gpu
+    return bandwidth_gbs * 1e9 / bytes_per_token_per_gpu
