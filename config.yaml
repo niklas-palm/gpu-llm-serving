@@ -187,7 +187,9 @@ tuning:
 
   # Max tokens per request, input + output. 0 = the model's own maximum.
   # Lowering it frees nothing (KV cache is allocated in blocks on demand). Use it only to reject
-  # over-long requests.
+  # over-long requests. One exception: on a card the weights nearly fill, the engine will not start
+  # unless the KV left holds one request of this length; lower it then (a 57 GB bf16 model on an 80 GB
+  # card needed 32768). docs/tuning.md, "maxModelLen".
   maxModelLen: 0
 
   # Ceiling on concurrent sequences, not a reservation. Keep it above the concurrency you load-test

@@ -64,7 +64,9 @@ prefill-bound past it.
 
 The catalog also knows `p5.4xlarge` and `p5.48xlarge` (H100 SXM, 80 GiB HBM3 at 3,350 GB/s, 1 and 8
 GPUs) so the same stack can be measured on Hopper; every figure in this document is g7e unless a table
-says otherwise, and NVFP4 checkpoints do not run on an H100.
+says otherwise, and NVFP4 checkpoints do not run on an H100. Measured on eight of each with the same
+matrix (*Choosing a model to host*, point 10): the H100 is +26% on the fp8 mixture-of-experts and +124%
+on a dense bf16 model, at roughly 1.8× the spot price per GPU-hour.
 
 Every g7e size carries the same GPU: 96 GiB of VRAM at about 1,600 GB/s (the Server Edition runs its GDDR7
 at 25 Gbps; the 1,792 GB/s often quoted is the workstation card). Larger sizes add GPUs, vCPU
@@ -621,6 +623,12 @@ cache in fixed-size blocks on demand; the ceiling is not a reservation, so lower
 
 Set it only to **reject** requests longer than some limit. Not to go faster.
 
+One exception, and it is about starting rather than speed: the engine refuses to start unless the KV
+cache left after the weights can hold at least one request of `maxModelLen` tokens. On a card the
+weights nearly fill (a 57 GB bf16 model on an 80 GB card, 16 GiB left, 24 GiB needed for a 262k
+request) the model's default context makes the engine fail at startup; `maxModelLen: 32768` starts it.
+On the 96 GB cards this document is measured on, none of the models tested came close.
+
 ### `maxNumSeqs: 256`
 
 Ceiling on concurrent sequences. A ceiling, not a reservation: it reserves no memory; too low leaves
@@ -652,7 +660,8 @@ more than 1% (*Choosing a model to host*).
 ### `kvCacheDtype: fp8`
 
 Stores the KV cache at 8 bits instead of 16. Measured **+12% decode** at full load (163.7 vs 146.7,
-like-for-like), up from +4.9% at low concurrency.
+like-for-like), up from +4.9% at low concurrency. On a sliding-window mixture-of-experts (the 120B
+MXFP4) it was +5% on the reference shape and +7% on 4,000-token prompts, and it started without complaint.
 
 At high concurrency the KV cache is roughly half of all decode memory traffic, and at concurrency 1
 almost none, so halving it is worth close to 10% with a full batch and nothing alone. Smaller entries
@@ -741,6 +750,12 @@ the engine warns that `min_p` and `logit_bias` are unsupported with it. Not ship
 the draft model is specific to the target: change `modelId` and this line must change with it, and a
 mismatch fails at startup.
 
+The same flag on a different family, the 120B MXFP4 mixture-of-experts with its publisher's EAGLE-3 draft
+(`nvidia/gpt-oss-120b-Eagle3-v3`): mean acceptance 2.5, long answers (1,000 in / 800 out) **31.8
+against 19.1 req/s at 512 in flight (+66%)**, 97 against 65 tokens/s per request at 64, the mixed shape
++43%. Speculation is worth most where decode dominates, and it needs a longer warm-up than plain
+serving before its numbers settle (*Choosing a model to host*, point 12).
+
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
 and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
 
@@ -755,8 +770,10 @@ one engine per GPU) so the effects can be compared; the model names are the evid
 
 ### The evidence: five sets of weights, one matrix
 
-Two models, a 30B mixture-of-experts with ~3B active parameters and a dense 27B with hybrid attention,
-in every precision each is published in. Six shapes (1,000 in / 190 out, the same fully cached, 4,000 in
+Three families: a 30B mixture-of-experts with ~3B active parameters, a dense 27B with hybrid attention,
+each in every precision it is published in, and a 120B mixture-of-experts with ~5B active parameters
+published only in MXFP4. A fourth, a 120B Mamba-hybrid mixture-of-experts in NVFP4, did not survive the
+matrix (below). Six shapes (1,000 in / 190 out, the same fully cached, 4,000 in
 / 190 out unique and cached, 1,000 in / 800 out, and a 300 to 1,700 in / 100 to 300 out mix), four
 concurrency levels (64 to 512 in flight, 8 to 64 per engine), 60 s each, unique prompts unless stated,
 driven from an in-region client. At 512 in flight, whole fleet:
@@ -768,6 +785,8 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 27B dense, NVFP4 (community build) | 42.5 (10.5 s) | 44 | 52,000 | 9.8 |
 | 27B dense, fp8 | 33.8 (13.2 s) | 34 | 33,000 | 8.5 |
 | 27B dense, bf16 | 19.0 (20.6 s) | 38 | 13,000, saturated | 4.7 |
+| 120B MoE (5B active), MXFP4 | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
+| 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
 
 ### What generalises
 
@@ -797,6 +816,34 @@ driven from an in-region client. At 512 in flight, whole fleet:
    number in this document says which shape it came from for that reason.
 7. **Batch-size knobs do not move the needle.** `maxNumBatchedTokens` at 16,384 against the engine
    default was within 1% on every shape and level, now measured at 1,000 and 4,000-token prompts.
+8. **A new architecture in a new format on a new GPU can be kernel-unstable in the current engine
+   release. Test for survival before speed.** The Mamba-hybrid 120B in NVFP4 loaded cleanly and served
+   1,000-token prompts, then killed three of eight engines under 4,000-token prompts with nothing in
+   its own log; the hosts' `dmesg` showed NVIDIA Xid 13/31/43 in the engine process, a GPU kernel
+   fault. The model card's recipe sets two environment variables to avoid the FlashInfer FP4 kernels;
+   the first removed the long-prompt fault and was faster, but engines still died on cached prompts;
+   both together ran clean at a 30 to 40% throughput cost. `extraEnv` exists for this. Judge such a
+   model by whether it survives the 4,000-token shape at 64 per engine, not by its first rows.
+9. **Speculative decoding is the biggest decode lever, and it is conditional.** An EAGLE-3 draft on the
+   120B MXFP4 model: mean acceptance 2.5 of 3 drafted tokens, +66% on long answers at 512 in flight,
+   +43% on the mixed shape, +47% on the reference shape at 128. It costs verification compute, so the
+   gain shrinks as the batch saturates the GPU, and the draft must match the target checkpoint. Warm
+   the engine longer than usual before measuring it (below).
+10. **A faster GPU pays in proportion to how bandwidth-bound the model is.** The same matrix on eight
+    H100 80 GB (one `p5.48xlarge`, spot ~$20/h) against the eight g7e.2xlarge: +26% on the fp8
+    mixture-of-experts, +82% on it in bf16, +70% on the dense 27B in fp8, +124% on the dense 27B in
+    bf16. Precision matters less there: fp8 over bf16 is +9% on the H100 against +58% here. Per GPU-hour
+    on spot (~$2.50 against ~$1.40) the g7e wins requests per dollar on the 3B-active model; the H100
+    wins on dense bf16 and on long prompts. Buy the GPU for the wall you are at.
+11. **On a card the weights nearly fill, `maxModelLen` decides whether the engine starts.** The 30B in
+    bf16 (57 GB) on an 80 GB H100 refused to start at the model's 262k default context: one maximum-
+    length request needs 24 GiB of KV and 16 GiB were left. `maxModelLen: 32768` started it. The same
+    card then hit 100% KV and 150 preemptions under 4,000-token prompts at 64 per engine: bf16 on 80 GB
+    is KV-starved for long prompts. On 96 GB nothing of this shows.
+12. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
+    37 s in the first shape after every deploy on both GPU families (lazy kernel compilation and
+    autotuning), then ran with p95 5 to 9 s. The benchmark script's `--warmup-seconds` covers the
+    first requests; for such models run a throwaway minute first.
 
 ### Two things about measuring itself
 
