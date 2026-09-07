@@ -1286,3 +1286,20 @@ def test_configured_token_bands_shape_both_the_collector_and_the_widget():
     assert [m[0]["label"] for m in answers["metrics"] if isinstance(m[0], dict) and "expression" in m[0]] == ["up to 200", "200 and more"]
     with pytest.raises(ConfigError, match="promptTokenBands"):
         synth(promptTokenBands=[8000])
+
+
+def test_extra_env_reaches_the_engine_and_cannot_shadow_the_stack_variables():
+    """A model card's recipe set VLLM_USE_FLASHINFER_MOE_FP4=0 to dodge a faulting kernel; before this
+    the only way to set an engine variable was to rebuild the image."""
+    env = {e["Name"]: e["Value"] for e in vllm_container(synth(extraEnv={"VLLM_USE_FLASHINFER_MOE_FP4": "0",
+                                                                          "VLLM_LOGGING_LEVEL": "DEBUG",
+                                                                          "COUNT": 3}))["Environment"]}
+    assert env["VLLM_USE_FLASHINFER_MOE_FP4"] == "0" and env["VLLM_LOGGING_LEVEL"] == "DEBUG" and env["COUNT"] == "3"
+    assert "MODEL_ID" in env, "the stack's own variables are still there"
+    with pytest.raises(ConfigError, match="already sets"):
+        synth(extraEnv={"MODEL_ID": "x"})
+    with pytest.raises(ConfigError, match="not a valid variable name"):
+        synth(extraEnv={"BAD-NAME": "x"})
+    with pytest.raises(ConfigError, match="extraEnv must be a"):
+        synth(extraEnv=["A=B"])
+    assert "EXTRA_ENV" not in {e["Name"] for e in vllm_container(synth())["Environment"]}, "empty adds nothing"

@@ -446,6 +446,27 @@ aws ecs describe-task-definition --task-definition "$TASK_DEF" --region "$REGION
 
 ---
 
+## Symptom: an engine dies under load with nothing in its log
+
+The task's log ends with the API server reporting `EngineDeadError: EngineCore encountered an issue`
+and exiting 0; the engine process itself wrote nothing. ECS replaces the task, the load balancer counts
+502s and 504s meanwhile. When the engine process is killed from outside, the reason is on the **host**:
+
+```bash
+aws ssm send-command --region "$REGION" --instance-ids <instance> --document-name AWS-RunShellScript \
+  --parameters 'commands=["dmesg -T | grep -i -E \"out of memory|killed process|xid\" | tail"]'
+```
+
+- `Out of memory: Killed process ... python3`: host RAM. The container gets 60% of the instance's RAM;
+  a model that needs more host memory than that at runtime needs a size with more RAM per GPU.
+- `NVRM: Xid 13 / 31 / 43 ... name=python3`: a GPU kernel faulted (illegal memory access, MMU fault).
+  Not a capacity problem; a kernel bug for this model, precision and GPU combination. Seen on this
+  hardware with a 120B NVFP4 mixture-of-experts under 4,000-token prompts at 32 or more requests per
+  engine. Try the alternative kernel backend the model card names, through `extraEnv` (for FP4 MoE:
+  `VLLM_USE_FLASHINFER_MOE_FP4: "0"`), or a different checkpoint precision.
+
+---
+
 ## Symptom: the engine starts, then dies once traffic arrives
 
 Usually `502`s under load after a clean startup: the target closed the connection mid-request. Look

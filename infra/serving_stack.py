@@ -44,7 +44,7 @@ from constructs import Construct
 
 from hardware import (DEFAULT_OUTPUT_TOKEN_BANDS, DEFAULT_PROMPT_TOKEN_BANDS, ROOT_VOLUME_GIB,
                       ROOT_VOLUME_IOPS, ROOT_VOLUME_THROUGHPUT_MBPS, ConfigError, _flag, _given, _list,
-                      _num, bytes_per_param_for, get_instance, memory_pressure_warning, model_bytes,
+                      _mapping, _num, bytes_per_param_for, get_instance, memory_pressure_warning, model_bytes,
                       resolve_topology, validate_token_bands)
 
 CONTAINER_PORT = 8080
@@ -579,6 +579,18 @@ class ServingStack(Stack):
         # checks in validate_tuning, which is the point, and the risk.
         if cfg.get("extraArgs"):
             env["EXTRA_ARGS"] = cfg["extraArgs"]
+        # Environment variables for the engine process. Many vLLM knobs are only reachable this way
+        # (kernel backends, attention backend, download behaviour), and a model card's recipe often
+        # sets them. Validated as names so a typo cannot shadow one of the variables this stack sets.
+        for name, value in _mapping(cfg.get("extraEnv"), "extraEnv").items():
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)) or str(name) in env:
+                raise ConfigError(
+                    f"extraEnv: {name!r} is not a valid variable name, or is one this stack already sets "
+                    f"({', '.join(sorted(env))})."
+                )
+            if not isinstance(value, (str, int, float)):   # bool is an int; rendered as true/false
+                raise ConfigError(f"extraEnv: {name} must be a string or number (got {value!r}).")
+            env[str(name)] = str(value).lower() if isinstance(value, bool) else str(value)
 
         container = task_def.add_container(
             "vllm",

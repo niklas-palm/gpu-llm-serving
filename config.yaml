@@ -170,6 +170,13 @@ quantization: "fp8"
 # beyond diagnosing a startup problem: -85% decode. docs/tuning.md, "Speculative decoding with EAGLE-3".
 extraArgs: ""
 
+# Optional. Environment variables for the engine process, for the knobs vLLM exposes only that way
+# (kernel backends, attention backend, download behaviour). A model card's recipe often names them.
+#   extraEnv:
+#     VLLM_USE_FLASHINFER_MOE_FP4: "0"
+# Unvalidated beyond the names. Empty: none.
+extraEnv: {}
+
 # ---------------------------------------------------------------------------- tuning
 #
 # Leave these unless you have a reason; docs/tuning.md has the numbers behind each one.
