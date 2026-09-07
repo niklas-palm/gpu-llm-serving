@@ -1031,11 +1031,11 @@ def test_the_collector_is_configured_inline_with_exactly_the_shortlist():
     The shortlist is the bill: custom metrics are charged per name."""
     cfg = collector_config(synth())
     assert "targets: [\"localhost:8080\"]" in cfg, "awsvpc: both containers share localhost"
-    keep = cfg.split("job_name: engine")[1].split("job_name: bands")[0]
-    assert "action: keep" in keep, "only the shortlist is kept at scrape time"
-    for name in ("vllm:num_requests_waiting", "vllm:num_requests_running",
-                 "vllm:kv_cache_usage_perc", "vllm:num_preemptions_total"):
-        assert name in keep
+    assert "match_type: strict" in cfg
+    shortlist = cfg.split("filter/shortlist:")[1].split("transform/bands:")[0]
+    for name in ("vllm:num_requests_waiting", "vllm:num_requests_running", "vllm:kv_cache_usage_perc",
+                 "vllm:num_preemptions_total", "vllm:request_prompt_tokens_le"):
+        assert name in shortlist
     assert "namespace: T/Engine" in cfg
     assert "dimensions: [[]]" in cfg, "no per-task dimension: Maximum/Average across the fleet"
 
@@ -1237,7 +1237,7 @@ def test_cumulative_engine_metrics_become_per_minute_deltas():
     """The engine's histograms and counters are cumulative since start. Exported as-is, "preemptions per
     minute" summed lifetime totals and the request averages were lifetime averages."""
     cfg = collector_config(synth())
-    assert "cumulativetodelta" in cfg and "[transform/bands, cumulativetodelta]" in cfg
+    assert "cumulativetodelta" in cfg and "[filter/shortlist, transform/bands, cumulativetodelta]" in cfg
     for name in ("vllm:num_preemptions_total", "vllm:time_to_first_token_seconds",
                  "vllm:e2e_request_latency_seconds", "vllm:request_prompt_tokens",
                  "vllm:request_generation_tokens"):

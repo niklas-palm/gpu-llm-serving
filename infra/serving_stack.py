@@ -637,10 +637,6 @@ receivers:
           scrape_interval: 30s
           static_configs:
             - targets: ["localhost:{CONTAINER_PORT}"]
-          metric_relabel_configs:
-            - source_labels: [__name__]
-              regex: "{"|".join(ENGINE_METRICS)}"
-              action: keep
         - job_name: bands
           scrape_interval: 30s
           static_configs:
@@ -658,6 +654,13 @@ receivers:
               target_label: __name__
               replacement: "vllm:request_generation_tokens_le"
 processors:
+  # By metric name, after the receiver has assembled histograms. A scrape-time keep rule sees the raw
+  # _bucket/_sum/_count series instead and dropped every histogram (found in the pre-deploy check).
+  filter/shortlist:
+    metrics:
+      include:
+        match_type: strict
+        metric_names: {list(ENGINE_METRICS) + ["vllm:request_prompt_tokens_le", "vllm:request_generation_tokens_le"]}
   transform/bands:
     metric_statements:
       - context: metric
@@ -683,7 +686,7 @@ service:
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [transform/bands, cumulativetodelta]
+      processors: [filter/shortlist, transform/bands, cumulativetodelta]
       exporters: [awsemf]
 """
         task_def.add_container(
