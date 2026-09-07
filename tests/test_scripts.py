@@ -93,3 +93,28 @@ def test_a_size_list_is_a_per_request_mix(monkeypatch):
     bench.worker("http://u", "k", "m", conc=2, in_tok=[100, 1000], out_tok=[50, 800], seconds=0.1, shared=True, q=q)
     q.get(timeout=5)
     assert {round(n, -2) for n, _ in seen} == {100, 1000} and {o for _, o in seen} == {50, 800}
+
+
+def test_a_level_drains_its_in_flight_requests_and_counts_only_the_window(monkeypatch):
+    """Exiting with requests open left the engine generating them behind CloudFront, and the next level
+    started behind that backlog. The worker now waits for them and does not count the late ones."""
+    import multiprocessing as mp
+    import time
+    bench = _load("benchmark")
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, *a, **k): time.sleep(0.4); return Resp()
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    q = mp.Queue(); t0 = time.perf_counter()
+    bench.worker("http://u", "k", "m", conc=3, in_tok=[10], out_tok=[5], seconds=0.5, shared=True, q=q)
+    r = q.get(timeout=5); elapsed = time.perf_counter() - t0
+    assert r["ok"] == 3, "one request per thread completed inside the 0.5 s window"
+    assert elapsed >= 0.8, "the second request of each thread was drained, not abandoned"
+    assert r["wall"] < 0.6, "the reported wall is the window, not the drain"

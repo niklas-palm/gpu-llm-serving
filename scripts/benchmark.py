@@ -18,6 +18,12 @@ not threads: one Python process driving 768 connections measured a third of the 
 
 A comma-separated --input-tokens or --output-tokens is a mix: each request draws one size from the list,
 so a value listed twice is twice as likely. The dashboard's request-shape widgets show what arrived.
+
+Each level counts the requests that complete inside its window, then waits for the ones still in flight
+before the next level starts. Ending a level with requests open looked harmless and was not: behind
+CloudFront the engine never hears that the client went away, so up to one full concurrency of abandoned
+requests kept generating into the next level. Measured, that capped 4,000-token prompts at a fifth of
+their real rate and made a fully cached run slower than an uncached one.
 """
 
 from __future__ import annotations
@@ -66,6 +72,8 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
                                     "max_output_tokens": random.choice(out_tok), "temperature": 0.0},
                               timeout=300)
                 dt = time.perf_counter() - t0
+                if stop.is_set():
+                    continue          # finished after the window: drained, not counted
                 if r.status_code == 200:
                     # Parsed before the lock, so a malformed body raises before "ok" is counted.
                     u = r.json().get("usage") or {}
@@ -90,8 +98,11 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
         t.start()
     time.sleep(seconds)
     stop.set()
-    with lock:   # a copy of lat: threads still finishing a request would append to the shared list
-        q.put({"wall": time.perf_counter() - t_start, **stats, "lat": list(stats["lat"])})
+    wall = time.perf_counter() - t_start
+    for t in threads:   # drain: every request opened inside the window finishes before we report
+        t.join(timeout=330)
+    with lock:
+        q.put({"wall": wall, **stats, "lat": list(stats["lat"])})
 
 
 def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
@@ -102,12 +113,12 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
                                              a.seconds, a.shared_prefix, q)) for n in per_proc if n]
     for p in procs:
         p.start()
-    # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level plus the
-    # per-request timeout bounds how long a healthy worker can take.
+    # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level, the drain
+    # and the per-request timeout bound how long a healthy worker can take.
     results = []
     for _ in procs:
         try:
-            results.append(q.get(timeout=a.seconds + 330))
+            results.append(q.get(timeout=a.seconds + 700))
         except Exception:                                   # noqa: BLE001 - queue.Empty
             print("  a load process did not report; its share is missing from this level",
                   file=sys.stderr)
