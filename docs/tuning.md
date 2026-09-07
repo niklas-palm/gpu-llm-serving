@@ -1087,13 +1087,21 @@ their sum and count, not their buckets, so the dashboard shows **averages** over
 that minute and no percentiles. Latency percentiles come from the load balancer widget. (Tested: the
 exported record is `{Sum, Count}` even with the collector's detailed-metrics option.)
 
-**Request-size bands** are the exception, done differently: *What size are the prompts?* and *How long
-are the answers?* stack requests per minute into token bands (up to 200, 200 to 500, 500 to 1,000,
-1,000 to 2,000, 2,000 to 5,000, more; for answers 50, 100, 200, 500, 1,000). The collector scrapes the
-engine's histogram buckets a second time, renames them so they arrive as plain counters with an `le`
-dimension, and the widget subtracts adjacent buckets. The bands are the engine's fixed bucket edges, so
-they are coarse, but a shift in traffic shape is visible at a glance, and it is the number to check
-`scalingRequestsPerTarget` against. Twelve extra metric series.
+#### Request-size bands
+
+*What size are the prompts?* and *How long are the answers?* stack requests per minute into token
+bands. The edges come from `promptTokenBands` and `outputTokenBands` in `config.yaml`; shipped: prompts
+500, 1,000, 2,000, 5,000, 10,000, 20,000 and answers 100, 200, 500, 1,000, 2,000, so the bands read
+"up to 500", "500 to 1,000", ..., "20,000 and more". Each edge must be one of the engine's histogram
+edges (1, 2, 5, 10, 20, 50, 100, 200, 500, 1,000, 2,000, 5,000, 10,000, 20,000, 50,000, 100,000,
+200,000): the collector only sees those buckets, so an edge like 8,000 cannot be drawn and is rejected
+at synth. Fewer edges, fewer lines: `[1000, 10000]` gives three bands. One metric series per edge plus
+one, about $0.30 a month each.
+
+How it works: the collector scrapes the engine's histogram buckets a second time, renames them so they
+arrive as plain counters with an `le` dimension, and the widget subtracts adjacent buckets. The bands are
+coarse by nature, but a shift in traffic shape is visible at a glance, and this is the number to check
+`scalingRequestsPerTarget` against.
 
 The metrics carry no per-task dimension; CloudWatch aggregates every engine's samples each minute.
 **Maximum** is the busiest engine, **Average** the typical one. A large gap between them is an uneven

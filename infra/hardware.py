@@ -320,6 +320,43 @@ _TRUE = {"true", "yes", "on", "1"}
 _FALSE = {"false", "no", "off", "0", ""}
 
 
+# The engine's histogram bucket edges for tokens per request (vLLM, fixed in its code). A size band on the
+# dashboard is the difference of two adjacent buckets, so a configured band edge has to be one of these.
+VLLM_TOKEN_BUCKET_EDGES = (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000,
+                           100000, 200000)
+DEFAULT_PROMPT_TOKEN_BANDS = (500, 1000, 2000, 5000, 10000, 20000)
+DEFAULT_OUTPUT_TOKEN_BANDS = (100, 200, 500, 1000, 2000)
+
+
+def validate_token_bands(value: object, key: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    """Band edges for a request-shape widget: ascending, each one of the engine's bucket edges.
+
+    Absent or blank means the default. The edges make the bands: up to the first, first to second, ...,
+    last and more. An edge the engine has no bucket for (8000, say) cannot be drawn, because the
+    collector only sees the engine's buckets, so it is rejected here rather than showing an empty band.
+    """
+    given = _given(value, None)
+    if given is None:
+        return default
+    if not isinstance(given, (list, tuple)):   # not _list: that coerces items to strings
+        raise ConfigError(f"{key} must be a LIST of edges, e.g. [1000, 10000] (got {given!r}).")
+    edges = list(given)
+    allowed = ", ".join(str(e) for e in VLLM_TOKEN_BUCKET_EDGES)
+    if not edges:
+        raise ConfigError(f"{key} needs at least one edge (or leave it out for the default).")
+    clean: list[int] = []
+    for e in edges:
+        if isinstance(e, bool) or not isinstance(e, int) or e not in VLLM_TOKEN_BUCKET_EDGES:
+            raise ConfigError(
+                f"{key}: {e!r} is not one of the engine's histogram edges.\n"
+                f"  Allowed, ascending: {allowed}"
+            )
+        clean.append(e)
+    if clean != sorted(set(clean)):
+        raise ConfigError(f"{key} must be ascending with no repeats (got {clean}).")
+    return tuple(clean)
+
+
 def _list(value: object, key: str) -> list[str]:
     """Coerce a list-shaped config value, rejecting a scalar written where a list belongs.
 

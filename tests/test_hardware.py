@@ -488,3 +488,19 @@ def test_the_recommended_nvfp4_checkpoint_counts_as_quantised():
     recommends was sized at half a byte per parameter and still reported as unquantised."""
     assert weights_are_quantised("nvidia/Qwen3-30B-A3B-NVFP4", "")
     assert bytes_per_param_for("nvidia/Qwen3-30B-A3B-NVFP4", "") == 0.5
+
+
+def test_token_band_edges_must_be_engine_bucket_edges_in_order():
+    """A band is the difference of two adjacent engine buckets, so an edge the engine has no bucket for
+    (8000) would draw an empty band; unsorted or repeated edges would draw negative ones."""
+    from hardware import (DEFAULT_PROMPT_TOKEN_BANDS, VLLM_TOKEN_BUCKET_EDGES, validate_token_bands)
+    assert validate_token_bands(None, "promptTokenBands", DEFAULT_PROMPT_TOKEN_BANDS) == DEFAULT_PROMPT_TOKEN_BANDS
+    assert validate_token_bands("", "promptTokenBands", DEFAULT_PROMPT_TOKEN_BANDS) == DEFAULT_PROMPT_TOKEN_BANDS
+    assert validate_token_bands([1000, 10000], "promptTokenBands", DEFAULT_PROMPT_TOKEN_BANDS) == (1000, 10000)
+    assert validate_token_bands(list(VLLM_TOKEN_BUCKET_EDGES), "x", ()) == VLLM_TOKEN_BUCKET_EDGES, "every edge at once is allowed"
+    for bad, match in [([8000], "not one of the engine's histogram edges"),
+                       ([2000, 1000], "ascending"), ([1000, 1000], "no repeats"),
+                       ([], "at least one edge"), ("1000", "must be a LIST"), (1000, "must be a LIST"),
+                       ([True], "not one of"), (["1000"], "not one of"), ([1000.0], "not one of")]:
+        with pytest.raises(ConfigError, match=match):
+            validate_token_bands(bad, "promptTokenBands", DEFAULT_PROMPT_TOKEN_BANDS)

@@ -42,9 +42,10 @@ from aws_cdk import aws_secretsmanager as secretsmanager
 from aws_cdk import aws_sns as sns
 from constructs import Construct
 
-from hardware import (ROOT_VOLUME_GIB, ROOT_VOLUME_IOPS, ROOT_VOLUME_THROUGHPUT_MBPS,
-                      ConfigError, _flag, _given, _list, _num, bytes_per_param_for, get_instance,
-                      memory_pressure_warning, model_bytes, resolve_topology)
+from hardware import (DEFAULT_OUTPUT_TOKEN_BANDS, DEFAULT_PROMPT_TOKEN_BANDS, ROOT_VOLUME_GIB,
+                      ROOT_VOLUME_IOPS, ROOT_VOLUME_THROUGHPUT_MBPS, ConfigError, _flag, _given, _list,
+                      _num, bytes_per_param_for, get_instance, memory_pressure_warning, model_bytes,
+                      resolve_topology, validate_token_bands)
 
 CONTAINER_PORT = 8080
 
@@ -88,11 +89,9 @@ ENGINE_METRICS = (
 # dashboard means that minute: without it "preemptions per minute" summed lifetime totals.
 ENGINE_CUMULATIVE = ENGINE_METRICS[3:]
 # Request-size bands: the engine's histogram buckets for tokens per request, kept as separate
-# counters with an `le` dimension so the dashboard can stack "requests per minute in each band". The
-# engine's buckets are fixed (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, ...); these are the
-# ones that separate request shapes for a chat or RAG workload. Twelve metric series, about $3.60 a month.
-PROMPT_TOKEN_BANDS = (200, 500, 1000, 2000, 5000)
-OUTPUT_TOKEN_BANDS = (50, 100, 200, 500, 1000)
+# counters with an `le` dimension so the dashboard can stack "requests per minute in each band". Which
+# edges: `promptTokenBands` and `outputTokenBands` in config.yaml, validated against the engine's fixed
+# bucket edges in hardware.py. One metric series per edge, plus one.
 
 
 class ServingStack(Stack):
@@ -619,10 +618,14 @@ class ServingStack(Stack):
         #
         # No dimensions. CloudWatch then aggregates every engine's samples per minute, so
         # `Maximum` is the worst engine and `Average` the typical one - which is what the dashboard
-        # needs - and the bill is ten metrics plus twelve band series regardless of fleet size. A per-task dimension would
+        # needs - and the bill is ten metrics plus the band series regardless of fleet size. A per-task dimension would
         # let you name the sick engine, at a cost that grows with the fleet; the task's own logs in
         # the log group already serve that purpose.
         engine_metrics_namespace = f"{self.stack_name}/Engine"
+        prompt_bands = validate_token_bands(cfg.get("promptTokenBands"), "promptTokenBands",
+                                            DEFAULT_PROMPT_TOKEN_BANDS)
+        output_bands = validate_token_bands(cfg.get("outputTokenBands"), "outputTokenBands",
+                                            DEFAULT_OUTPUT_TOKEN_BANDS)
         # Second scrape of the same endpoint for the request-size bands. The receiver folds a histogram's
         # `_bucket` series into one histogram, and the exporter then keeps only its sum and count, so the
         # buckets are renamed out from under it (`_bucket` -> `_le`), which makes them plain series;
@@ -643,7 +646,7 @@ receivers:
             - targets: ["localhost:{CONTAINER_PORT}"]
           metric_relabel_configs:
             - source_labels: [__name__, le]
-              regex: "vllm:request_prompt_tokens_bucket;({le_values(PROMPT_TOKEN_BANDS)})|vllm:request_generation_tokens_bucket;({le_values(OUTPUT_TOKEN_BANDS)})"
+              regex: "vllm:request_prompt_tokens_bucket;({le_values(prompt_bands)})|vllm:request_generation_tokens_bucket;({le_values(output_bands)})"
               action: keep
             - source_labels: [__name__]
               regex: "vllm:request_prompt_tokens_bucket"
@@ -806,7 +809,7 @@ service:
         #   errors, healthy tasks, instances. Free, and there is no collection path that can break.
         # * What the engine itself reports, via the metrics sidecar defined with the task above: queue
         #   depth, batch occupancy, KV cache usage, preemptions. These are the numbers that say WHY
-        #   latency is rising rather than just that it is; 22 custom metric series, about $6.60 a month.
+        #   latency is rising rather than just that it is; ten metrics plus one series per band edge.
         #
         # Everything user-facing here is written in plain language on purpose. The reader is someone
         # woken by an alarm who has never seen this stack, so a widget titled "TargetResponseTime p95"
@@ -982,9 +985,9 @@ service:
 
         dashboard.add_widgets(
             bands_widget("What size are the prompts? - requests a minute by input tokens",
-                         "vllm:request_prompt_tokens", PROMPT_TOKEN_BANDS),
+                         "vllm:request_prompt_tokens", prompt_bands),
             bands_widget("How long are the answers? - requests a minute by output tokens",
-                         "vllm:request_generation_tokens", OUTPUT_TOKEN_BANDS),
+                         "vllm:request_generation_tokens", output_bands),
             cloudwatch.GraphWidget(
                 title="Is the prefix cache paying off? - % of prompt tokens already cached", width=8,
                 left=[cloudwatch.MathExpression(

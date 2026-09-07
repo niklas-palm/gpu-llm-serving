@@ -98,7 +98,8 @@ useSpot: false
 # erroring), plus a latency alarm if latencyAlarmSeconds is set. Top rows: load balancer and ASG
 # metrics. Bottom rows: engine metrics from a sidecar in every task (queue depth, batch occupancy,
 # KV cache usage, preemptions, time to first token, request time, tokens in and out per request,
-# requests by size band, prefix cache hit rate). 22 custom metric series, about $6.60 a month.
+# requests by size band, prefix cache hit rate). Ten metrics plus one series per band edge,
+# about $7.50 a month with the shipped bands.
 # scripts/endpoint_info.py prints the dashboard URL.
 # docs/tuning.md, "Watching a running fleet" and "Engine metrics".
 
@@ -109,6 +110,14 @@ latencyAlarmSeconds: 0
 # SNS topic ARN to notify when an alarm fires. Empty: alarms still change state in the console, nobody
 # is paged. No topic is created for you.
 alarmTopicArn: ""
+
+# Optional. Size bands for the two request-shape widgets, as ascending edges: the bands are "up to the
+# first edge", edge to edge, then "last edge and more". Each edge must be one of the engine's histogram
+# edges: 1 2 5 10 20 50 100 200 500 1000 2000 5000 10000 20000 50000 100000 200000; anything else is
+# rejected at synth. Fewer edges means fewer lines and fewer metric series (one per edge plus one).
+# docs/tuning.md, "Request-size bands".
+promptTokenBands: [500, 1000, 2000, 5000, 10000, 20000]
+outputTokenBands: [100, 200, 500, 1000, 2000]
 
 # ---------------------------------------------------------------------------- model
 

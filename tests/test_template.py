@@ -1260,12 +1260,29 @@ def test_request_size_bands_and_prefix_cache_hit_rate_reach_the_dashboard():
     cfg = collector_config(synth())
     assert "job_name: bands" in cfg and "transform/bands" in cfg
     assert 'replacement: "vllm:request_prompt_tokens_le"' in cfg
-    assert "200.0|500.0|1000.0|2000.0|5000.0|\\\\+Inf" in cfg, "the prompt bands, and +Inf escaped for the regex"
+    assert "500.0|1000.0|2000.0|5000.0|10000.0|20000.0|\\\\+Inf" in cfg, "the shipped prompt bands, and +Inf escaped for the regex"
     assert '- dimensions: [["le"]]' in cfg and "${" not in cfg, "no ${...}: CloudFormation and the collector both expand it"
     widgets = {w["properties"].get("title", ""): w["properties"] for w in dashboard_widgets(synth()) if w["type"] == "metric"}
     prompts = next(p for t, p in widgets.items() if t.startswith("What size are the prompts?"))
     assert prompts["stacked"] is True
     expressions = [m[0]["expression"] for m in prompts["metrics"] if isinstance(m[0], dict) and "expression" in m[0]]
-    assert expressions == ["b0", "b1 - b0", "b2 - b1", "b3 - b2", "b4 - b3", "b5 - b4"]
+    assert expressions == ["b0", "b1 - b0", "b2 - b1", "b3 - b2", "b4 - b3", "b5 - b4", "b6 - b5"]
     cache = next(p for t, p in widgets.items() if t.startswith("Is the prefix cache paying off?"))
     assert any(isinstance(m[0], dict) and m[0].get("expression") == "100 * hits / queries" for m in cache["metrics"])
+
+
+def test_configured_token_bands_shape_both_the_collector_and_the_widget():
+    """The same edges must reach the scrape filter (which buckets are kept) and the widget (which
+    differences are drawn); a mismatch would draw bands from buckets that never arrive."""
+    template = synth(promptTokenBands=[1000, 10000], outputTokenBands=[200])
+    cfg = collector_config(template)
+    assert "vllm:request_prompt_tokens_bucket;(1000.0|10000.0|\\\\+Inf)" in cfg
+    assert "vllm:request_generation_tokens_bucket;(200.0|\\\\+Inf)" in cfg
+    widgets = {w["properties"].get("title", ""): w["properties"] for w in dashboard_widgets(template) if w["type"] == "metric"}
+    prompts = next(p for t, p in widgets.items() if t.startswith("What size are the prompts?"))
+    labels = [m[0]["label"] for m in prompts["metrics"] if isinstance(m[0], dict) and "expression" in m[0]]
+    assert labels == ["up to 1,000", "1,000 to 10,000", "10,000 and more"]
+    answers = next(p for t, p in widgets.items() if t.startswith("How long are the answers?"))
+    assert [m[0]["label"] for m in answers["metrics"] if isinstance(m[0], dict) and "expression" in m[0]] == ["up to 200", "200 and more"]
+    with pytest.raises(ConfigError, match="promptTokenBands"):
+        synth(promptTokenBands=[8000])
