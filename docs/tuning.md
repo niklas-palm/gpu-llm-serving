@@ -1038,7 +1038,7 @@ Widgets are titled as questions:
 
 | Widget | Read it for |
 |---|---|
-| *Is it slow?* (p50/p95/p99, with `latencyAlarmSeconds` drawn on it if set) | The only number with an SLA. **A rising p99 against a flat p50 means queueing, not a slow model.** |
+| *Is it slow?* (p50/p95/p99, with `latencyAlarmSeconds` drawn on it if set) | The only number with an SLA. The load balancer times a request until the engine starts answering: the whole answer for a non-streamed call, the first token for a streamed one. **A rising p99 against a flat p50 means queueing, not a slow model.** |
 | *How hard is each engine working?* (requests/min per task, with `scalingRequestsPerTarget` drawn on it) | The leading indicator, and the metric the scaling policy compares against. |
 | *Is the load balancer failing?* (ALB 5XX) | The *load balancer* failing: 503 = no healthy target, 504 = a request outran its 300 s idle timeout. |
 | *Is CloudFront timing out?* (CloudFront 5xx rate) | A non-streamed answer that took longer than CloudFront's 120 s read timeout. Invisible to the load balancer, so it has its own widget. |
@@ -1065,8 +1065,8 @@ looks like a working notification and is not one.
 ### Engine metrics: what the load balancer cannot see
 
 The numbers that say *why* the fleet is slow are on vLLM's Prometheus endpoint at `/metrics`. A
-sidecar in every task scrapes four of them over localhost and writes them to CloudWatch under the
-namespace `<stack>/Engine`, the bottom row of the dashboard. Nothing to enable.
+sidecar in every task scrapes eight of them over localhost and writes them to CloudWatch under the
+namespace `<stack>/Engine`, the bottom two rows of the dashboard. Nothing to enable.
 
 | Metric | Widget | What a bad reading means |
 |---|---|---|
@@ -1074,6 +1074,16 @@ namespace `<stack>/Engine`, the bottom row of the dashboard. Nothing to enable.
 | `vllm:num_requests_running` | same widget | Sequences in the current batch. Pinned at `maxNumSeqs` means the batch ceiling is the limit; well below it while requests wait means KV cache is. |
 | `vllm:kv_cache_usage_perc` | *Is the KV cache filling up?* | 0 to 1. Near 1 is the real ceiling on concurrency, and what `gpuMemoryUtilization: 0.95` buys more of. |
 | `vllm:num_preemptions_total` | *Are engines redoing work?* | **Anything above zero is trouble.** The engine evicted a running sequence to free cache and will recompute it from scratch. Rising preemptions are the mechanism behind a collapsing p99. |
+
+| `vllm:time_to_first_token_seconds` | *How long does a request take inside the engine?* | Average time to first token: queue wait plus prefill. Rising while *waiting* is zero means prefill itself is the cost (long prompts). |
+| `vllm:e2e_request_latency_seconds` | same widget | Average whole-request time as the engine saw it. Compare with the load balancer's p50: a gap is the network path, not the engine. |
+| `vllm:request_prompt_tokens` | *What shape are the requests being served?* | Average input tokens per request. The number `scalingRequestsPerTarget` is derived from; if it drifts, so should the threshold. |
+| `vllm:request_generation_tokens` | same widget | Average output tokens per request. Pinned at a round number means callers hit their `max_output_tokens`. |
+
+The last four are histograms in the engine, but the collector passes CloudWatch their sum and count,
+not their buckets, so the dashboard shows **averages** over the requests completed that minute and no
+percentiles. Latency percentiles come from the load balancer widget. (Tested: the exported record is
+`{Sum, Count}` even with the collector's detailed-metrics option; the buckets do not survive the path.)
 
 The metrics carry no per-task dimension; CloudWatch aggregates every engine's samples each minute.
 **Maximum** is the busiest engine, **Average** the typical one. A large gap between them is an uneven

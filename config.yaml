@@ -102,8 +102,9 @@ useSpot: false
 
 # Every deployment gets a CloudWatch dashboard and two alarms (engines unhealthy, load balancer
 # erroring), plus a latency alarm if latencyAlarmSeconds is set. Top rows: load balancer and ASG
-# metrics. Bottom row: engine metrics from a sidecar in every task (queue depth, batch occupancy,
-# KV cache usage, preemptions). Four custom metrics, about $1.20 a month.
+# metrics. Bottom rows: engine metrics from a sidecar in every task (queue depth, batch occupancy,
+# KV cache usage, preemptions, time to first token, request time, tokens in and out per request).
+# Eight custom metrics, about $2.40 a month.
 # scripts/endpoint_info.py prints the dashboard URL.
 # docs/tuning.md, "Watching a running fleet" and "Engine metrics".
 

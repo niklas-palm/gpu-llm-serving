@@ -1240,3 +1240,23 @@ def test_an_existing_deployment_can_keep_its_vpc_origin_name():
     assert only(synth(vpcOriginName="  "), "AWS::CloudFront::VpcOrigin")["VpcOriginEndpointConfig"]["Name"] == "T-us-west-2"
     with pytest.raises(ConfigError, match="vpcOriginName"):
         synth(vpcOriginName="x" * 65)
+
+
+def test_cumulative_engine_metrics_become_per_minute_deltas():
+    """The engine's histograms and counters are cumulative since start. Exported as-is, "preemptions per
+    minute" summed lifetime totals and the request averages were lifetime averages."""
+    cfg = collector_config(synth())
+    assert "cumulativetodelta" in cfg and "[filter/shortlist, cumulativetodelta]" in cfg
+    for name in ("vllm:num_preemptions_total", "vllm:time_to_first_token_seconds",
+                 "vllm:e2e_request_latency_seconds", "vllm:request_prompt_tokens",
+                 "vllm:request_generation_tokens"):
+        assert name in cfg.split("cumulativetodelta:")[1].split("exporters:")[0], name
+
+
+def test_the_latency_widget_says_what_the_load_balancer_times():
+    """A tester asked whether the graph was time to first token or to the last. It is both, depending
+    on whether the call streams, and the title has to say so."""
+    titles = [w["properties"].get("title", "") for w in dashboard_widgets(synth()) if w["type"] == "metric"]
+    assert any("first token if streaming" in t for t in titles), titles
+    assert any(t.startswith("How long does a request take inside the engine?") for t in titles)
+    assert any(t.startswith("What shape are the requests being served?") for t in titles)

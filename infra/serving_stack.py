@@ -63,15 +63,25 @@ HOST_MODEL_CACHE = "/opt/modelcache"
 # dashboard reads without any change in this repository.
 METRICS_SIDECAR_IMAGE = "public.ecr.aws/aws-observability/aws-otel-collector:v0.43.3"
 METRICS_SIDECAR_MEMORY_MIB = 256
-# The engine metrics the dashboard reads. Four of the ~86 families the engine exposes; the rest are
-# either derivable from these, duplicated by the load balancer, or histograms CloudWatch cannot turn
-# into percentiles. Custom metrics are billed per name, so the shortlist is also the bill.
+# The engine metrics the dashboard reads. Eight of the ~86 families the engine exposes; the rest are
+# either derivable from these or duplicated by the load balancer. Custom metrics are billed per name,
+# so the shortlist is also the bill.
 ENGINE_METRICS = (
     "vllm:num_requests_waiting",   # queued but not running - saturation, before latency shows it
     "vllm:num_requests_running",   # sequences in the batch, against maxNumSeqs
     "vllm:kv_cache_usage_perc",    # 0..1; near 1 means preemption is next
     "vllm:num_preemptions_total",  # counter; anything above zero is the engine going backwards
+    # Histograms. The collector hands CloudWatch their sum and count, not their buckets (tested: the
+    # EMF record is {Sum, Count} even with detailed_metrics on), so these give averages per minute and
+    # no percentiles. Latency percentiles are the load balancer's response-time widget.
+    "vllm:time_to_first_token_seconds",   # queue wait plus prefill
+    "vllm:e2e_request_latency_seconds",   # whole request, as the engine saw it
+    "vllm:request_prompt_tokens",         # the input shape actually being served
+    "vllm:request_generation_tokens",     # the output shape
 )
+# Cumulative since engine start. Converted to per-scrape deltas in the collector, so a minute on the
+# dashboard means that minute: without it "preemptions per minute" summed lifetime totals.
+ENGINE_CUMULATIVE = ENGINE_METRICS[3:]
 
 
 class ServingStack(Stack):
@@ -602,7 +612,7 @@ class ServingStack(Stack):
         #
         # No dimensions. CloudWatch then aggregates every engine's samples per minute, so
         # `Maximum` is the worst engine and `Average` the typical one - which is what the dashboard
-        # needs - and the bill is four metrics regardless of fleet size. A per-task dimension would
+        # needs - and the bill is eight metrics regardless of fleet size. A per-task dimension would
         # let you name the sick engine, at a cost that grows with the fleet; the task's own logs in
         # the log group already serve that purpose.
         engine_metrics_namespace = f"{self.stack_name}/Engine"
@@ -621,6 +631,10 @@ processors:
       include:
         match_type: strict
         metric_names: {list(ENGINE_METRICS)}
+  cumulativetodelta:
+    include:
+      match_type: strict
+      metrics: {list(ENGINE_CUMULATIVE)}
 exporters:
   awsemf:
     region: {self.region}
@@ -635,7 +649,7 @@ service:
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [filter/shortlist]
+      processors: [filter/shortlist, cumulativetodelta]
       exporters: [awsemf]
 """
         task_def.add_container(
@@ -754,7 +768,7 @@ service:
         #   errors, healthy tasks, instances. Free, and there is no collection path that can break.
         # * What the engine itself reports, via the metrics sidecar defined with the task above: queue
         #   depth, batch occupancy, KV cache usage, preemptions. These are the numbers that say WHY
-        #   latency is rising rather than just that it is; four custom metrics, about $1.20 a month.
+        #   latency is rising rather than just that it is; eight custom metrics, about $2.40 a month.
         #
         # Everything user-facing here is written in plain language on purpose. The reader is someone
         # woken by an alarm who has never seen this stack, so a widget titled "TargetResponseTime p95"
@@ -793,7 +807,9 @@ service:
         dashboard = cloudwatch.Dashboard(self, "Dashboard", dashboard_name=dashboard_name)
         dashboard.add_widgets(
             cloudwatch.GraphWidget(
-                title=("Is it slow? - response time"
+                # The load balancer times a request until the engine starts answering: the whole
+                # generation for a non-streamed call, the first token for a streamed one.
+                title=("Is it slow? - time to the answer (whole answer if not streaming, first token if streaming)"
                        + (f" vs your {latency_alarm:g}s budget" if latency_alarm else "")), width=12,
                 left=[response_time("p50", label="typical request (p50)"),
                       response_time("p95", label="slow request (p95)"),
@@ -886,6 +902,23 @@ service:
                 title="Are engines redoing work? - preemptions, any is bad", width=8,
                 left=[engine_metric("vllm:num_preemptions_total", "Sum", "preemptions per minute")],
                 left_y_axis=cloudwatch.YAxisProps(label="preemptions", show_units=False, min=0),
+            ),
+        )
+        # Averages over the requests completed that minute, whole fleet: Sum/Count of the engine
+        # histograms. Not percentiles; see ENGINE_METRICS.
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="How long does a request take inside the engine? - averages that minute", width=12,
+                left=[engine_metric("vllm:time_to_first_token_seconds", "Average",
+                                    "time to first token (queue wait + prefill)"),
+                      engine_metric("vllm:e2e_request_latency_seconds", "Average", "whole request")],
+                left_y_axis=cloudwatch.YAxisProps(label="seconds", show_units=False, min=0),
+            ),
+            cloudwatch.GraphWidget(
+                title="What shape are the requests being served? - average tokens per request", width=12,
+                left=[engine_metric("vllm:request_prompt_tokens", "Average", "input tokens"),
+                      engine_metric("vllm:request_generation_tokens", "Average", "output tokens")],
+                left_y_axis=cloudwatch.YAxisProps(label="tokens", show_units=False, min=0),
             ),
         )
 
