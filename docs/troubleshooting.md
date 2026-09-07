@@ -71,6 +71,41 @@ cd infra && cdk bootstrap && cd ..
 
 ---
 
+## Symptom: `cdk destroy` ends in `DELETE_FAILED` on a subnet, security group or the VPC
+
+`DependencyViolation ... has dependencies and cannot be deleted`. Something outside the stack holds a
+network interface in the VPC. In an account with GuardDuty Runtime Monitoring and automated agent
+management, GuardDuty creates a `guardduty-data` VPC endpoint and a `GuardDutyManagedSecurityGroup-*`
+security group in every VPC that runs instances, and does not always remove them when the instances go.
+Neither belongs to the stack, so CloudFormation cannot delete them and the subnets they sit in.
+
+Remove them, then destroy again; the retry picks up where it stopped:
+
+```bash
+REGION=<region>; STACK=GpuLlmServing
+VPC=$(aws cloudformation describe-stack-resources --region "$REGION" --stack-name "$STACK" \
+  --query "StackResources[?ResourceType=='AWS::EC2::VPC'].PhysicalResourceId" --output text)
+aws ec2 delete-vpc-endpoints --region "$REGION" --vpc-endpoint-ids $(aws ec2 describe-vpc-endpoints \
+  --region "$REGION" --filters Name=vpc-id,Values="$VPC" Name=service-name,Values="com.amazonaws.$REGION.guardduty-data" \
+  --query 'VpcEndpoints[].VpcEndpointId' --output text)
+# wait until this prints 0, about a minute
+aws ec2 describe-network-interfaces --region "$REGION" --filters Name=vpc-id,Values="$VPC" \
+  --query 'length(NetworkInterfaces)' --output text
+aws ec2 delete-security-group --region "$REGION" --group-id $(aws ec2 describe-security-groups \
+  --region "$REGION" --filters Name=vpc-id,Values="$VPC" Name=group-name,Values='GuardDutyManagedSecurityGroup-*' \
+  --query 'SecurityGroups[0].GroupId' --output text)
+cdk destroy
+```
+
+Any other interface the first command lists (a Lambda, a Client VPN, another team's endpoint) is the same
+story: find its owner, remove it, retry.
+
+A different `DELETE_FAILED`, on the ECS cluster with `The specified capacity provider is in use`, is an
+ordering race inside CloudFormation: it detached the capacity provider before the service was gone.
+Nothing to clean up; destroy again.
+
+---
+
 ## Symptom: `cdk destroy` fails with `delete is not allowed for this vpc origin`
 
 You destroyed a stack whose CloudFront VPC origin was still being created. CloudFront refuses to delete a

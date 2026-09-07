@@ -622,9 +622,9 @@ GPU instances are gone**, about five minutes (the check at the end of this secti
 ten minutes. Destroying while the instances were still draining left the ECS service in `DRAINING` for
 25 minutes, paying for idle GPUs throughout.
 
-If the destroy hangs on the subnets or the VPC, something outside the stack still holds a network
-interface or security group in it. GuardDuty Runtime Monitoring is the usual cause; delete its VPC
-endpoint and security group.
+If the destroy ends in `DELETE_FAILED` on a subnet or the VPC, something outside the stack still holds a
+network interface in it. GuardDuty Runtime Monitoring is the usual cause; the four commands that clear
+it are in docs/troubleshooting.md, *cdk destroy ends in DELETE_FAILED*.
 
 `cdk destroy` does not touch what `build_image.py` created: the ECR repository `gpu-llm-serving` (image
 storage, the one that costs), the build bucket `gpu-llm-serving-build-<account>-<region>`, the CodeBuild
