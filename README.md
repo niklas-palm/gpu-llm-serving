@@ -560,8 +560,9 @@ notify an SNS topic. Set `latencyAlarmSeconds` for a third, `<stack>-too-slow`, 
 default because "too slow" depends on the caller.
 
 Top rows come from the load balancer and Auto Scaling group. The bottom row comes from inside the
-engines: a sidecar in every task scrapes vLLM's metrics and publishes queue depth, KV cache usage and
-preemptions, which say *why* a fleet is slow. See *Watching a running fleet* and *Engine metrics* in
+engines: a sidecar in every task scrapes vLLM's metrics and publishes queue depth, KV cache usage,
+preemptions, time to first token, request sizes by band and the prefix cache hit rate, which say *why*
+a fleet is slow and what shape of traffic it is serving. See *Watching a running fleet* and *Engine metrics* in
 [docs/tuning.md](docs/tuning.md), which also covers overload (the container queues indefinitely; it
 never returns "busy").
 

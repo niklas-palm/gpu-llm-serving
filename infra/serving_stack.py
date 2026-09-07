@@ -58,12 +58,15 @@ CLOUDFRONT_READ_TIMEOUT_S = 120
 CONTAINER_MODEL_PATH = "/opt/model"
 HOST_MODEL_CACHE = "/opt/modelcache"
 
-# The metrics sidecar: the AWS Distro for OpenTelemetry collector, run unmodified from the public
-# image with its configuration passed inline. Pinned, because a floating tag would change what the
-# dashboard reads without any change in this repository.
-METRICS_SIDECAR_IMAGE = "public.ecr.aws/aws-observability/aws-otel-collector:v0.43.3"
+# The metrics sidecar: the upstream OpenTelemetry collector (contrib build), run unmodified from the
+# public image with its configuration passed inline. Upstream rather than the AWS distribution because
+# the request-size bands below need its `transform` processor, which the AWS build does not ship (tested
+# against v0.43.3 and latest). Pinned, because a floating tag would change what the dashboard reads
+# without any change in this repository.
+METRICS_SIDECAR_IMAGE = ("ghcr.io/open-telemetry/opentelemetry-collector-releases/"
+                         "opentelemetry-collector-contrib:0.135.0")
 METRICS_SIDECAR_MEMORY_MIB = 256
-# The engine metrics the dashboard reads. Eight of the ~86 families the engine exposes; the rest are
+# The engine metrics the dashboard reads. Ten of the ~86 families the engine exposes; the rest are
 # either derivable from these or duplicated by the load balancer. Custom metrics are billed per name,
 # so the shortlist is also the bill.
 ENGINE_METRICS = (
@@ -78,10 +81,18 @@ ENGINE_METRICS = (
     "vllm:e2e_request_latency_seconds",   # whole request, as the engine saw it
     "vllm:request_prompt_tokens",         # the input shape actually being served
     "vllm:request_generation_tokens",     # the output shape
+    "vllm:prefix_cache_queries_total",    # prompt tokens looked up in the prefix cache
+    "vllm:prefix_cache_hits_total",       # of those, found; hits / queries is the hit rate
 )
 # Cumulative since engine start. Converted to per-scrape deltas in the collector, so a minute on the
 # dashboard means that minute: without it "preemptions per minute" summed lifetime totals.
 ENGINE_CUMULATIVE = ENGINE_METRICS[3:]
+# Request-size bands: the engine's histogram buckets for tokens per request, kept as separate
+# counters with an `le` dimension so the dashboard can stack "requests per minute in each band". The
+# engine's buckets are fixed (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, ...); these are the
+# ones that separate request shapes for a chat or RAG workload. Twelve metric series, about $3.60 a month.
+PROMPT_TOKEN_BANDS = (200, 500, 1000, 2000, 5000)
+OUTPUT_TOKEN_BANDS = (50, 100, 200, 500, 1000)
 
 
 class ServingStack(Stack):
@@ -608,10 +619,15 @@ class ServingStack(Stack):
         #
         # No dimensions. CloudWatch then aggregates every engine's samples per minute, so
         # `Maximum` is the worst engine and `Average` the typical one - which is what the dashboard
-        # needs - and the bill is eight metrics regardless of fleet size. A per-task dimension would
+        # needs - and the bill is ten metrics plus twelve band series regardless of fleet size. A per-task dimension would
         # let you name the sick engine, at a cost that grows with the fleet; the task's own logs in
         # the log group already serve that purpose.
         engine_metrics_namespace = f"{self.stack_name}/Engine"
+        # Second scrape of the same endpoint for the request-size bands. The receiver folds a histogram's
+        # `_bucket` series into one histogram, and the exporter then keeps only its sum and count, so the
+        # buckets are renamed out from under it (`_bucket` -> `_le`), which makes them plain series;
+        # `transform` turns those into counters so `cumulativetodelta` can take per-scrape deltas.
+        le_values = lambda bands: "|".join([f"{b}.0" for b in bands] + [r"\\+Inf"])  # noqa: E731
         collector_config = f"""
 receivers:
   prometheus:
@@ -621,16 +637,36 @@ receivers:
           scrape_interval: 30s
           static_configs:
             - targets: ["localhost:{CONTAINER_PORT}"]
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: "{"|".join(ENGINE_METRICS)}"
+              action: keep
+        - job_name: bands
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["localhost:{CONTAINER_PORT}"]
+          metric_relabel_configs:
+            - source_labels: [__name__, le]
+              regex: "vllm:request_prompt_tokens_bucket;({le_values(PROMPT_TOKEN_BANDS)})|vllm:request_generation_tokens_bucket;({le_values(OUTPUT_TOKEN_BANDS)})"
+              action: keep
+            - source_labels: [__name__]
+              regex: "vllm:request_prompt_tokens_bucket"
+              target_label: __name__
+              replacement: "vllm:request_prompt_tokens_le"
+            - source_labels: [__name__]
+              regex: "vllm:request_generation_tokens_bucket"
+              target_label: __name__
+              replacement: "vllm:request_generation_tokens_le"
 processors:
-  filter/shortlist:
-    metrics:
-      include:
-        match_type: strict
-        metric_names: {list(ENGINE_METRICS)}
+  transform/bands:
+    metric_statements:
+      - context: metric
+        statements:
+          - convert_gauge_to_sum("cumulative", true) where IsMatch(name, "_le$")
   cumulativetodelta:
     include:
-      match_type: strict
-      metrics: {list(ENGINE_CUMULATIVE)}
+      match_type: regexp
+      metrics: {[f"^{m}$" for m in ENGINE_CUMULATIVE] + ["_le$"]}
 exporters:
   awsemf:
     region: {self.region}
@@ -639,13 +675,15 @@ exporters:
     log_stream_name: engine-metrics
     dimension_rollup_option: NoDimensionRollup
     metric_declarations:
+      - dimensions: [["le"]]
+        metric_name_selectors: ["_le$"]
       - dimensions: [[]]
-        metric_name_selectors: [".*"]
+        metric_name_selectors: {[f"^{m}$" for m in ENGINE_METRICS]}
 service:
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [filter/shortlist, cumulativetodelta]
+      processors: [transform/bands, cumulativetodelta]
       exporters: [awsemf]
 """
         task_def.add_container(
@@ -662,7 +700,8 @@ service:
             # replaced. 60 s is the smallest period ECS allows; a container that dies within its first
             # 60 s is not restarted, which is the one gap this leaves.
             enable_restart_policy=True, restart_attempt_period=Duration.seconds(60),
-            environment={"AOT_CONFIG_CONTENT": collector_config},
+            command=["--config=env:OTEL_CONFIG"],
+            environment={"OTEL_CONFIG": collector_config},
             logging=ecs.LogDrivers.aws_logs(stream_prefix="metrics", log_group=log_group),
         )
         # What the collector needs: to write embedded-metric-format records into this stack's log
@@ -764,7 +803,7 @@ service:
         #   errors, healthy tasks, instances. Free, and there is no collection path that can break.
         # * What the engine itself reports, via the metrics sidecar defined with the task above: queue
         #   depth, batch occupancy, KV cache usage, preemptions. These are the numbers that say WHY
-        #   latency is rising rather than just that it is; eight custom metrics, about $2.40 a month.
+        #   latency is rising rather than just that it is; 22 custom metric series, about $6.60 a month.
         #
         # Everything user-facing here is written in plain language on purpose. The reader is someone
         # woken by an alarm who has never seen this stack, so a widget titled "TargetResponseTime p95"
@@ -915,6 +954,42 @@ service:
                 left=[engine_metric("vllm:request_prompt_tokens", "Average", "input tokens"),
                       engine_metric("vllm:request_generation_tokens", "Average", "output tokens")],
                 left_y_axis=cloudwatch.YAxisProps(label="tokens", show_units=False, min=0),
+            ),
+        )
+
+        def bands_widget(title: str, metric: str, bands: tuple[int, ...]) -> cloudwatch.GraphWidget:
+            """Requests per minute in each size band, stacked. The engine's buckets are cumulative
+            (le=1000 includes le=500), so a band is the difference of two adjacent buckets."""
+            def bucket(le: str, ident: str) -> cloudwatch.Metric:
+                return cloudwatch.Metric(namespace=engine_metrics_namespace, metric_name=f"{metric}_le",
+                                         dimensions_map={"le": le}, statistic="Sum", period=minute,
+                                         label=ident)
+            edges = [f"{b}.0" for b in bands] + ["+Inf"]
+            using = {f"b{i}": bucket(le, f"b{i}") for i, le in enumerate(edges)}
+            series = [cloudwatch.MathExpression(expression="b0", using_metrics={"b0": using["b0"]},
+                                                label=f"up to {bands[0]:,}", period=minute)]
+            for i in range(1, len(edges)):
+                upper = "and more" if edges[i] == "+Inf" else f"to {bands[i]:,}"
+                series.append(cloudwatch.MathExpression(
+                    expression=f"b{i} - b{i - 1}", label=f"{bands[i - 1]:,} {upper}", period=minute,
+                    using_metrics={f"b{i}": using[f"b{i}"], f"b{i - 1}": using[f"b{i - 1}"]}))
+            return cloudwatch.GraphWidget(
+                title=title, width=8, left=series, stacked=True,
+                left_y_axis=cloudwatch.YAxisProps(label="requests per minute", show_units=False, min=0))
+
+        dashboard.add_widgets(
+            bands_widget("What size are the prompts? - requests a minute by input tokens",
+                         "vllm:request_prompt_tokens", PROMPT_TOKEN_BANDS),
+            bands_widget("How long are the answers? - requests a minute by output tokens",
+                         "vllm:request_generation_tokens", OUTPUT_TOKEN_BANDS),
+            cloudwatch.GraphWidget(
+                title="Is the prefix cache paying off? - % of prompt tokens already cached", width=8,
+                left=[cloudwatch.MathExpression(
+                    expression="100 * hits / queries", label="hit rate", period=minute,
+                    using_metrics={"hits": engine_metric("vllm:prefix_cache_hits_total", "Sum", "hits"),
+                                   "queries": engine_metric("vllm:prefix_cache_queries_total", "Sum",
+                                                            "queries")})],
+                left_y_axis=cloudwatch.YAxisProps(label="percent", show_units=False, min=0, max=100),
             ),
         )
 

@@ -1080,10 +1080,20 @@ namespace `<stack>/Engine`, the bottom two rows of the dashboard. Nothing to ena
 | `vllm:request_prompt_tokens` | *What shape are the requests being served?* | Average input tokens per request. The number `scalingRequestsPerTarget` is derived from; if it drifts, so should the threshold. |
 | `vllm:request_generation_tokens` | same widget | Average output tokens per request. Pinned at a round number means callers hit their `max_output_tokens`. |
 
-The last four are histograms in the engine, but the collector passes CloudWatch their sum and count,
-not their buckets, so the dashboard shows **averages** over the requests completed that minute and no
-percentiles. Latency percentiles come from the load balancer widget. (Tested: the exported record is
-`{Sum, Count}` even with the collector's detailed-metrics option; the buckets do not survive the path.)
+| `vllm:prefix_cache_queries_total`, `vllm:prefix_cache_hits_total` | *Is the prefix cache paying off?* | Hit rate = hits / queries, in prompt tokens, per minute. A shared system prompt shows up here; unique prompts read 0%, which is what the fleet is sized for. |
+
+The four latency and size metrics are histograms in the engine, but the collector passes CloudWatch
+their sum and count, not their buckets, so the dashboard shows **averages** over the requests completed
+that minute and no percentiles. Latency percentiles come from the load balancer widget. (Tested: the
+exported record is `{Sum, Count}` even with the collector's detailed-metrics option.)
+
+**Request-size bands** are the exception, done differently: *What size are the prompts?* and *How long
+are the answers?* stack requests per minute into token bands (up to 200, 200 to 500, 500 to 1,000,
+1,000 to 2,000, 2,000 to 5,000, more; for answers 50, 100, 200, 500, 1,000). The collector scrapes the
+engine's histogram buckets a second time, renames them so they arrive as plain counters with an `le`
+dimension, and the widget subtracts adjacent buckets. The bands are the engine's fixed bucket edges, so
+they are coarse, but a shift in traffic shape is visible at a glance, and it is the number to check
+`scalingRequestsPerTarget` against. Twelve extra metric series.
 
 The metrics carry no per-task dimension; CloudWatch aggregates every engine's samples each minute.
 **Maximum** is the busiest engine, **Average** the typical one. A large gap between them is an uneven
@@ -1106,10 +1116,11 @@ Warnings that continue past startup mean the engine is not listening on its port
 
 How it is built:
 
-* The unmodified public AWS Distro for OpenTelemetry collector image (`METRICS_SIDECAR_IMAGE` in
+* The unmodified upstream OpenTelemetry collector image, contrib build (`METRICS_SIDECAR_IMAGE` in
   `infra/serving_stack.py`), 256 MiB, non-essential so a metrics problem cannot stop inference. Its
-  configuration is a ~30-line string in the same file, passed inline through the `AOT_CONFIG_CONTENT`
-  environment variable.
+  configuration is a ~60-line string in the same file, passed inline through the `OTEL_CONFIG`
+  environment variable. Upstream rather than the AWS distribution because the request-size bands need
+  the `transform` processor, which the AWS build does not include.
 * It scrapes `localhost:8080/metrics` every 30 seconds; `awsvpc` networking puts both containers in
   one network namespace.
 * Metrics are written as embedded-metric-format records into the stack's own log group (stream

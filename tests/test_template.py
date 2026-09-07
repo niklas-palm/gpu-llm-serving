@@ -1010,7 +1010,7 @@ def collector_config(template: dict) -> str:
     """The config embeds the log group name, a Ref at synth time, so CloudFormation renders the
     whole string as an Fn::Join. Flatten it, rendering each Ref/GetAtt as a placeholder."""
     value = next(e["Value"] for e in sidecar(template)["Environment"]
-                 if e["Name"] == "AOT_CONFIG_CONTENT")
+                 if e["Name"] == "OTEL_CONFIG")
     if isinstance(value, str):
         return value
     return "".join(part if isinstance(part, str) else "<token>" for part in value["Fn::Join"][1])
@@ -1020,7 +1020,8 @@ def test_every_task_carries_a_metrics_sidecar_that_cannot_take_the_engine_down()
     """The engine says WHY the fleet is slow; the load balancer only says THAT it is. But a metrics
     bug must never stop inference, so the collector is a non-essential container."""
     c = sidecar(synth())
-    assert c["Image"].startswith("public.ecr.aws/aws-observability/aws-otel-collector:v")
+    assert c["Image"].startswith("ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.")
+    assert c["Command"] == ["--config=env:OTEL_CONFIG"], "the upstream image reads its config from this flag"
     assert c["Essential"] is False
     assert c["Memory"] == 256
 
@@ -1030,10 +1031,11 @@ def test_the_collector_is_configured_inline_with_exactly_the_shortlist():
     The shortlist is the bill: custom metrics are charged per name."""
     cfg = collector_config(synth())
     assert "targets: [\"localhost:8080\"]" in cfg, "awsvpc: both containers share localhost"
-    assert "match_type: strict" in cfg
+    keep = cfg.split("job_name: engine")[1].split("job_name: bands")[0]
+    assert "action: keep" in keep, "only the shortlist is kept at scrape time"
     for name in ("vllm:num_requests_waiting", "vllm:num_requests_running",
                  "vllm:kv_cache_usage_perc", "vllm:num_preemptions_total"):
-        assert name in cfg
+        assert name in keep
     assert "namespace: T/Engine" in cfg
     assert "dimensions: [[]]" in cfg, "no per-task dimension: Maximum/Average across the fleet"
 
@@ -1235,7 +1237,7 @@ def test_cumulative_engine_metrics_become_per_minute_deltas():
     """The engine's histograms and counters are cumulative since start. Exported as-is, "preemptions per
     minute" summed lifetime totals and the request averages were lifetime averages."""
     cfg = collector_config(synth())
-    assert "cumulativetodelta" in cfg and "[filter/shortlist, cumulativetodelta]" in cfg
+    assert "cumulativetodelta" in cfg and "[transform/bands, cumulativetodelta]" in cfg
     for name in ("vllm:num_preemptions_total", "vllm:time_to_first_token_seconds",
                  "vllm:e2e_request_latency_seconds", "vllm:request_prompt_tokens",
                  "vllm:request_generation_tokens"):
@@ -1249,3 +1251,21 @@ def test_the_latency_widget_says_what_the_load_balancer_times():
     assert any("first token if streaming" in t for t in titles), titles
     assert any(t.startswith("How long does a request take inside the engine?") for t in titles)
     assert any(t.startswith("What shape are the requests being served?") for t in titles)
+
+
+def test_request_size_bands_and_prefix_cache_hit_rate_reach_the_dashboard():
+    """The engine's token histograms lose their buckets on the way to CloudWatch, so the collector
+    scrapes them a second time as plain per-bucket counters with an `le` dimension. The widget stacks
+    adjacent-bucket differences; the prefix cache widget divides hits by queries."""
+    cfg = collector_config(synth())
+    assert "job_name: bands" in cfg and "transform/bands" in cfg
+    assert 'replacement: "vllm:request_prompt_tokens_le"' in cfg
+    assert "200.0|500.0|1000.0|2000.0|5000.0|\\\\+Inf" in cfg, "the prompt bands, and +Inf escaped for the regex"
+    assert '- dimensions: [["le"]]' in cfg and "${" not in cfg, "no ${...}: CloudFormation and the collector both expand it"
+    widgets = {w["properties"].get("title", ""): w["properties"] for w in dashboard_widgets(synth()) if w["type"] == "metric"}
+    prompts = next(p for t, p in widgets.items() if t.startswith("What size are the prompts?"))
+    assert prompts["stacked"] is True
+    expressions = [m[0]["expression"] for m in prompts["metrics"] if isinstance(m[0], dict) and "expression" in m[0]]
+    assert expressions == ["b0", "b1 - b0", "b2 - b1", "b3 - b2", "b4 - b3", "b5 - b4"]
+    cache = next(p for t, p in widgets.items() if t.startswith("Is the prefix cache paying off?"))
+    assert any(isinstance(m[0], dict) and m[0].get("expression") == "100 * hits / queries" for m in cache["metrics"])
