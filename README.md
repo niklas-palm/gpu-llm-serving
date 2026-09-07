@@ -187,6 +187,21 @@ GPU class, with its own, smaller quota. If on-demand cannot find instances, set 
 One engine per GPU is **derived, not configured**: `replicas: 0` means "GPUs ÷ tensorParallel", so a
 `g7e.48xlarge` gets eight engines.
 
+**Sizing and scaling, in short.** One g7e.2xlarge engine sustains about 16,000 input tokens/s at fp8;
+divide by your average input tokens per request for its requests/s. Size `instanceCount` for steady
+state from that, and derive the autoscaling threshold rather than keeping the shipped one:
+
+```
+scalingRequestsPerTarget  =  (16,000 ÷ average input tokens per request)  × 60  × 0.85
+```
+
+Autoscaling is burst insurance, not a saving: about 11 minutes to usable capacity, and a slow shrink.
+The measurements and the procedure to confirm the threshold on your own traffic are in
+[docs/tuning.md](docs/tuning.md): *Sizing a fleet, and when to autoscale*, *scalingRequestsPerTarget:
+derive it, do not inherit it*, and *What autoscaling actually does, measured*. To see the request shapes
+you are actually serving, the dashboard's engine rows show average tokens in and out per request
+(*Engine metrics* in the same doc).
+
 ### Values you would rather not commit
 
 `config.local.yaml` is **gitignored** and deep-merged over `config.yaml`, so it only needs the keys you
