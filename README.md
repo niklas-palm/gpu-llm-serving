@@ -568,7 +568,9 @@ default because "too slow" depends on the caller.
 Top rows come from the load balancer and Auto Scaling group. The bottom row comes from inside the
 engines: a sidecar in every task scrapes vLLM's metrics and publishes queue depth, KV cache usage,
 preemptions, time to first token, request sizes by band and the prefix cache hit rate, which say *why*
-a fleet is slow and what shape of traffic it is serving. See *Watching a running fleet* and *Engine metrics* in
+a fleet is slow and what shape of traffic it is serving. The band edges are `promptTokenBands` and
+`outputTokenBands` in `config.yaml`; any of the engine's bucket edges, fewer for less noise (*Request-size
+bands* in [docs/tuning.md](docs/tuning.md)). See *Watching a running fleet* and *Engine metrics* in
 [docs/tuning.md](docs/tuning.md), which also covers overload (the container queues indefinitely; it
 never returns "busy").
 
