@@ -143,7 +143,9 @@ def model_bytes(params_billions: float, bytes_per_param: float = 2.0) -> int:
 
 # Markers that a checkpoint is ALREADY quantised, so `quantization` is correctly left empty.
 # Case-insensitive substring match on the model id.
-FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "fp4", "nf4", "4bit", "4-bit")   # fp4 covers nvfp4
+# fp4 covers nvfp4 and mxfp4. gpt-oss is a family whose weights are only published in MXFP4, and the
+# repo ids carry no format marker, so the family name is the marker.
+FOUR_BIT_MARKERS = ("awq", "gptq", "int4", "w4a16", "fp4", "nf4", "4bit", "4-bit", "gpt-oss")
 QUANTISED_MODEL_MARKERS = FOUR_BIT_MARKERS + ("fp8", "int8", "w8a8", "8bit", "bnb")
 
 

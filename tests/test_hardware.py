@@ -525,3 +525,10 @@ def test_the_p5_entries_carry_their_own_gpu_and_size_against_it():
     assert get_instance("g7e.2xlarge").gpu_vram_gib == 96, "g7e entries unchanged"
     with pytest.raises(ConfigError, match="p5.48xlarge"):
         get_instance("p4d.24xlarge")
+
+
+def test_natively_4bit_families_without_a_marker_in_the_id_are_still_sized_as_4bit():
+    """openai/gpt-oss-120b ships only in MXFP4 and its id says nothing about precision; sized at 2 bytes
+    it was 240 GB and 'did not fit' a card it fits with room to spare."""
+    assert bytes_per_param_for("openai/gpt-oss-120b", "") == 0.5
+    assert derive_tensor_parallel(get_instance("g7e.2xlarge"), model_bytes(120, 0.5)) == 1
