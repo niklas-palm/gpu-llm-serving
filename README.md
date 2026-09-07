@@ -1,6 +1,12 @@
-# GPU LLM Serving
+# GPU LLM Serving with vLLM
 
-Deploy an open-weight LLM on AWS GPU instances behind a load balancer, with an OpenAI-compatible API.
+Deploy an open-weight LLM with [vLLM](https://github.com/vllm-project/vllm) on AWS GPU instances behind
+a load balancer, with an OpenAI-compatible API.
+
+This is a vLLM deployment, not a generic container host. The entrypoint turns the config keys into vLLM
+flags, the tuning doc measures vLLM settings, and the dashboard reads vLLM's own metrics (queue depth,
+KV cache, time to first token, request sizes, prefix cache hits). Another engine would mean replacing
+`container/serve`, the `tuning` block and the metrics shortlist in the stack.
 
 One CDK stack, one config file. You get an endpoint serving the **Responses API**
 (`/v1/responses`) and **Chat Completions** (`/v1/chat/completions`), authenticated with an API key.

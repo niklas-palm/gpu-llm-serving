@@ -6,7 +6,9 @@ Humans: start with `README.md`.
 ## Project
 
 One CDK stack that serves an open-weight LLM with vLLM on ECS GPU instances (g7e), behind an internal
-ALB and CloudFront, with an OpenAI-compatible API and a Bearer key. One config file. The docs carry as
+ALB and CloudFront, with an OpenAI-compatible API and a Bearer key. One config file. It is built around
+vLLM on purpose (entrypoint flags, tuning keys, engine metrics on the dashboard); do not generalise it
+to other engines. The docs carry as
 much value as the code: every number in them was measured on this hardware, and the point of the sample
 is that a reader can deploy it, understand it, and tune it without reading the source.
 
