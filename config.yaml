@@ -133,15 +133,17 @@ outputTokenBands: [100, 200, 500, 1000, 2000]
 #   nvidia/Qwen3-30B-A3B-NVFP4            calibrated 4-bit, 17 GiB, quantization: ""     +25-28% tok/s, quality unmeasured
 #   + EAGLE-3 speculator via extraArgs (see below)                                        +24-41% tok/s on any of them
 #
-# bf16 without quantization is half the throughput of fp8 and is the choice only on quality grounds.
+# bf16 without quantization measured 55 to 63% of fp8's throughput and is the choice only on quality grounds.
 modelId: Qwen/Qwen3-30B-A3B-Instruct-2507
 
 # Optional. For gated repos (Llama, Gemma): the name of a Secrets Manager secret holding your Hugging
 # Face token. Create it once, then set the name here or in config.local.yaml:
 #   aws secretsmanager create-secret --region <region> --name gpu-llm-serving/hf-token --secret-string "$HF_TOKEN"
 #   hfTokenSecretName: gpu-llm-serving/hf-token
-# The token reaches the engine as HF_TOKEN and never enters the template, outputs or logs. Empty: public
-# models only. The account behind the token must have accepted the model's licence (403 otherwise).
+# The token reaches the engine as HF_TOKEN and never enters the template, outputs or logs. Set it for
+# public models too: eight instances pulling anonymously at once hit HTTP 429 from Hugging Face, and one
+# engine died mid-download. The account behind the token must have accepted a gated model's licence
+# (403 otherwise).
 hfTokenSecretName: ""
 
 # Set this if your model is not roughly 30B parameters. The tensor-parallel degree is derived from it.
@@ -201,7 +203,8 @@ tuning:
   kvCacheDtype: fp8
 
   # Reuse attention state across requests sharing a prompt prefix. Leave on: -1.2% when nothing
-  # shares a prefix. Throughput figures in the docs assume hits; unique prompts get about half.
+  # shares a prefix. Figures in the docs are unique-prompt; every prompt cached measured +46% on 1k
+  # prompts and 2.7x on 4k prompts for the MoE, and nothing on a dense model (decode is its wall).
   # docs/tuning.md, "Choosing an operating concurrency".
   enablePrefixCaching: true
 

@@ -175,7 +175,7 @@ Smaller weights of the same model run faster and need fewer instances; measured 
 | `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit; output quality not measured |
 | any of the above + EAGLE-3 speculator in `extraArgs` | | +24% to +41% | one line; see [docs/tuning.md](docs/tuning.md) |
 
-bf16 with no quantisation is half the throughput of fp8. Details, and the caveats, in *Quantisation is two
+bf16 with no quantisation measured 55 to 63% of fp8's throughput. Details, and the caveats, in *Quantisation is two
 independent decisions* and *Speculative decoding with EAGLE-3* in [docs/tuning.md](docs/tuning.md).
 
 The shipped fleet defaults are sized for a production workload; `config.yaml` shows the arithmetic:

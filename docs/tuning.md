@@ -619,6 +619,9 @@ Token budget per scheduler step.
 prefill 19,069 → 19,274), as did cutting it 4× to 8k (prefill 49,603 vs 49,774). The prefill batch is
 never the constraint at this scale, so the default omits the flag.
 
+Measured again at 4,000-token prompts against the engine default: 16,384 changed no shape and no level by
+more than 1% (*Five weights on one fleet*).
+
 ### `kvCacheDtype: fp8`
 
 Stores the KV cache at 8 bits instead of 16. Measured **+12% decode** at full load (163.7 vs 146.7,
@@ -716,6 +719,60 @@ and had to ship inside the checkpoint. That was true of older engine versions an
 
 ---
 
+## Five weights on one fleet, one matrix
+
+The same fleet (8 × `g7e.2xlarge`, one engine each, vLLM 0.28.0) ran the same benchmark matrix on five
+sets of weights: the 30B mixture-of-experts (3B active) in fp8 and bf16, and a dense 27B
+(`Qwen/Qwen3.8-27B`, hybrid linear/full attention) in bf16, fp8 and a community NVFP4 checkpoint. Shapes:
+1,000 in / 190 out, the same with every prompt cached, 4,000 in / 190 out (unique and cached), 1,000 in /
+800 out, and a mix of 300 to 1,700 in / 100 to 300 out. 64, 128, 256 and 512 requests in flight across the
+fleet (8 to 64 per engine), 60 s per level, unique prompts unless stated. Driven from an in-region client.
+
+At 512 in flight, whole fleet:
+
+| weights | 1,000/190 req/s (p50) | same, all cached | 4,000/190 input tok/s | 1,000/800 req/s | mix req/s (p95) |
+|---|---|---|---|---|---|
+| 30B MoE fp8 (publisher build) | **93.5** (5.2 s) | 136 | **168,000** | **30.2** | 91 (8.6 s) |
+| 30B MoE bf16 | 59.1 (8.2 s) | 85 | 92,000 | 17.5 | 56 (13.7 s) |
+| 27B dense NVFP4 | 42.5 (10.5 s) | 44 | 52,000 | 9.8 | 44 (16.6 s) |
+| 27B dense fp8 (publisher build) | 33.8 (13.2 s) | 34 | 33,000 | 8.5 | 34 (21 s) |
+| 27B dense bf16 | 19.0 (20.6 s) | 38 | 13,000, saturated | 4.7 | 21 (34 s) |
+
+What the matrix says, in order of size:
+
+- **Active parameters decide throughput, not total parameters.** The dense 27B in fp8 delivers about a
+  third of the 30B MoE's request rate at the same latency budget, because every token reads all 27B
+  weights against the MoE's ~3B. Same fleet, same precision, 2.8x the GPUs for the same load.
+- **fp8 over bf16: +58% to +83%**, most on long prompts (168k against 92k input tokens/s). "Half the
+  throughput" for bf16 is the long-prompt case; on 1,000-token prompts bf16 gives 63% of fp8.
+- **NVFP4 over fp8: +26% on 1,000-token prompts, +57% on 4,000-token prompts**, the same band as the
+  MoE's NVFP4 build. The checkpoint is a community one and its output quality is unmeasured.
+- **The prefix cache pays where prefill is the wall.** On the MoE, every prompt cached is +46% at
+  1,000 tokens and 2.7x at 4,000 (168k to 453k tokens/s). On the dense 27B at 1,000 tokens it is
+  nothing (34.0 against 33.8): decode is the wall, so skipping prefill changes little. Size a fleet on
+  unique prompts and treat hits as margin.
+- **Long prompts move more tokens in fewer requests.** 4,000-token prompts on the MoE fp8 carried
+  168k input tokens/s at 46 req/s; 1,000-token prompts carried 88k at 93.5 req/s. The request-rate
+  threshold for autoscaling scales inversely with prompt length; the token rate does not.
+- **Dense bf16 saturates hard.** 27B bf16 with 4,000-token prompts fell from 6.1 req/s at 256 in flight
+  to 3.6 at 512 with p50 52 s: 63 running and 63 waiting per engine, KV cache at 76%, no preemptions.
+  Beyond the knee, more clients only add queue.
+- **`maxNumBatchedTokens` still has no measured effect**, now also at 4,000-token prompts: 16,384
+  against the engine default was within 1% on every shape and level.
+
+Two things the campaign taught about measuring, both now in the tooling:
+
+- **A client that abandons a request behind CloudFront leaves the engine working on it.** The engine
+  never sees the client disconnect; it finishes the generation. An earlier version of
+  `scripts/benchmark.py` ended each level with its in-flight requests open, and the next level started
+  behind up to one concurrency of zombies: 4,000-token prompts read a fifth of their real rate, engines
+  showed 256 running plus 256 waiting against 512 real clients, and a fully cached run came out slower
+  than an uncached one. The script now drains in-flight requests before a level reports. The same
+  applies to any real client with a short timeout: its retries stack on the engine.
+- **Anonymous Hugging Face downloads from eight instances at once hit HTTP 429.** One engine died mid
+  download and was replaced by ECS, and the rollout took 21 minutes instead of 14. Set
+  `hfTokenSecretName` for public models too.
+
 ## Choosing an operating concurrency
 
 Measured on the recommended topology (two GPUs as 2 × TP=1, FP8 weights, fp8 KV cache, ~1,200-token
@@ -792,7 +849,9 @@ An earlier datum: the same 6-instance fleet served **~115 requests/second at ~0.
 **1-token** outputs, a request-rate figure only; it shows the load balancer, the header-auth listener
 rule and 6-way balancing hold up.
 
-These are **unique-prompt** figures. With prefix cache hits the same hardware goes roughly 2× further;
+These are **unique-prompt** figures. With every prompt cached the same hardware measured +46% on
+1,000-token prompts and 2.7× on 4,000-token prompts on the MoE, and nothing on a dense 27B (*Five weights
+on one fleet*);
 see *Choosing an operating concurrency*.
 
 ### If you are benchmarking this yourself

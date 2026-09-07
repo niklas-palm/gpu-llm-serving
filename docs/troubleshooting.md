@@ -494,6 +494,16 @@ aws logs tail "$LOG_GROUP" --since 1h --region "$REGION" | grep -iE "kv.cache|gp
 
 ---
 
+## Symptom: an engine dies during the weight download with `429 Too Many Requests`
+
+The engine log ends in a traceback from the Hugging Face client: `HTTP status client error (429 Too
+Many Requests)`. Several instances pulling the same model anonymously at the same time hit the
+unauthenticated rate limit; ECS replaces the task and the second attempt usually succeeds, so the only
+cost is a slower rollout (21 minutes instead of 14 on an eight-instance fleet). Set `hfTokenSecretName`
+even for public models; authenticated requests have a far higher limit.
+
+---
+
 ## Symptom: model loading takes far longer than expected
 
 **Cause A: the first task on a new instance is downloading the weights from Hugging Face.** Tens of

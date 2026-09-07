@@ -221,7 +221,8 @@ def main() -> int:
         prev = r
 
     print("\nSize on the aggregate columns at the highest level whose p95 (or p99) is inside your budget."
-          "\nUnique-prompt numbers; with prefix cache hits the same hardware goes roughly 2x further.")
+          "\nUnique-prompt numbers. With every prompt cached the same hardware measured +46% on 1k prompts"
+          "\nand 2.7x on 4k prompts for a mixture-of-experts model, and nothing for a dense one.")
     return 0
 
 
