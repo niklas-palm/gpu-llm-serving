@@ -731,7 +731,7 @@ def test_the_load_balancer_waits_longer_than_a_generation_takes():
 
 def test_draining_gives_an_in_flight_generation_time_to_finish():
     """At the 30 s defaults, any request still generating was killed on every scale-in and every
-    deployment - and `min_healthy_percent=0` stops all tasks at once."""
+    deployment, and `min_healthy_percent=0` lets ECS stop several tasks at once."""
     template = synth()
     attrs = {a["Key"]: a["Value"]
              for a in only(template, "AWS::ElasticLoadBalancingV2::TargetGroup")
