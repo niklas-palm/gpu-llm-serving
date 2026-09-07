@@ -69,3 +69,27 @@ def test_a_malformed_usage_body_is_one_failed_request_not_an_ok_and_a_failure(mo
     bench.worker("http://u", "k", "m", conc=2, in_tok=10, out_tok=5, seconds=0.05, shared=True, q=q)
     r = q.get(timeout=5)
     assert r["ok"] == 0 and r["lat"] == [] and r["fail"] > 0
+
+
+def test_a_size_list_is_a_per_request_mix(monkeypatch):
+    """--input-tokens 1000,8000,16000 must produce prompts of each size, not one size; a bad entry or a
+    zero is a one-line exit."""
+    import multiprocessing as mp
+    bench = _load("benchmark")
+    seen = []
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, url, json, timeout):
+            seen.append((len(json["input"]) // 5, json["max_output_tokens"])); return Resp()
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    q = mp.Queue()
+    bench.worker("http://u", "k", "m", conc=2, in_tok=[100, 1000], out_tok=[50, 800], seconds=0.1, shared=True, q=q)
+    q.get(timeout=5)
+    assert {round(n, -2) for n, _ in seen} == {100, 1000} and {o for _, o in seen} == {50, 800}

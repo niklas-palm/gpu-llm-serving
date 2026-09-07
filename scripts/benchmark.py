@@ -4,6 +4,8 @@
     python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY"
     python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --concurrency 64,128,256,512 \
         --input-tokens 1000 --output-tokens 190 --seconds 120
+    python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --concurrency 256 \
+        --input-tokens 1000,4000,8000,8000,16000 --output-tokens 200,400,400,800     # a mixed workload
 
 One row per concurrency level: requests/sec, input and output tokens/sec, latency p50/p95/p99, and the
 decode speed a single request saw. Size a fleet on the aggregate numbers; check your latency budget on
@@ -13,6 +15,9 @@ passing p95 from a lower one overstated capacity by 21% once.
 Prompts are unique by default (a UUID up front defeats prefix caching) because that is the shape a fleet
 has to be sized for; --shared-prefix measures the cached case instead. Load is spread across processes,
 not threads: one Python process driving 768 connections measured a third of the true throughput.
+
+A comma-separated --input-tokens or --output-tokens is a mix: each request draws one size from the list,
+so a value listed twice is twice as likely. The dashboard's request-shape widgets show what arrived.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing as mp
+import random
 import statistics
 import sys
 import time
@@ -38,8 +44,8 @@ def prompt(n_tokens: int, shared: bool) -> str:
     return (body if shared else f"Request {uuid.uuid4()}. {body}")[: n_tokens * 5]
 
 
-def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int, seconds: float,
-           shared: bool, q: mp.Queue) -> None:
+def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok: list[int],
+           seconds: float, shared: bool, q: mp.Queue) -> None:
     import signal
     import threading
 
@@ -56,8 +62,8 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: int, out_tok: int,
             t0 = time.perf_counter()
             try:
                 r = sess.post(f"{url}/v1/responses",
-                              json={"model": model, "input": prompt(in_tok, shared),
-                                    "max_output_tokens": out_tok, "temperature": 0.0},
+                              json={"model": model, "input": prompt(random.choice(in_tok), shared),
+                                    "max_output_tokens": random.choice(out_tok), "temperature": 0.0},
                               timeout=300)
                 dt = time.perf_counter() - t0
                 if r.status_code == 200:
@@ -149,8 +155,8 @@ def main() -> int:
     ap.add_argument("--key", required=True, help="the ApiKeyValue stack output")
     ap.add_argument("--concurrency", default="64,128,256",
                     help="comma-separated levels to sweep; keep going until throughput stops rising")
-    ap.add_argument("--input-tokens", type=int, default=1000)
-    ap.add_argument("--output-tokens", type=int, default=190)
+    ap.add_argument("--input-tokens", default="1000", help="one size, or a comma-separated mix")
+    ap.add_argument("--output-tokens", default="190", help="one size, or a comma-separated mix")
     ap.add_argument("--seconds", type=float, default=90, help="per level, after warm-up")
     ap.add_argument("--warmup-seconds", type=float, default=20)
     ap.add_argument("--processes", type=int, default=8)
@@ -160,16 +166,23 @@ def main() -> int:
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
 
-    try:
-        levels = [int(x) for x in a.concurrency.split(",") if x.strip()]
-    except ValueError:
-        sys.exit(f"--concurrency must be comma-separated integers (got {a.concurrency!r})")
-    if (not levels or min(levels) < 1 or a.processes < 1 or a.seconds <= 0 or a.warmup_seconds < 0
-            or a.input_tokens < 1 or a.output_tokens < 1):
-        sys.exit("--concurrency needs one or more levels of at least 1, --processes at least 1, "
-                 "--seconds above 0, --warmup-seconds at least 0, token counts at least 1")
+    def sizes(flag: str, raw: str) -> list[int]:
+        try:
+            values = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            sys.exit(f"{flag} must be comma-separated integers (got {raw!r})")
+        if not values or min(values) < 1:
+            sys.exit(f"{flag} needs one or more sizes of at least 1 (got {raw!r})")
+        return values
+
+    levels = sizes("--concurrency", a.concurrency)
+    a.input_tokens = sizes("--input-tokens", a.input_tokens)
+    a.output_tokens = sizes("--output-tokens", a.output_tokens)
+    if a.processes < 1 or a.seconds <= 0 or a.warmup_seconds < 0:
+        sys.exit("--processes at least 1, --seconds above 0, --warmup-seconds at least 0")
     model = served_model(a.url, a.key)
-    print(f"model {model}\n{a.input_tokens} input / {a.output_tokens} output tokens, "
+    shape = lambda v: str(v[0]) if len(v) == 1 else f"a mix of {','.join(map(str, v))}"  # noqa: E731
+    print(f"model {model}\n{shape(a.input_tokens)} input / {shape(a.output_tokens)} output tokens, "
           f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts, {a.seconds:g}s per level "
           f"after {a.warmup_seconds:g}s warm-up, {a.processes} client processes\n")
 
