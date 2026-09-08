@@ -39,6 +39,11 @@ A third follows from the first two and decides which lever works:
   a model to host*). Total parameter count says how much VRAM you need; active parameter count says how
   fast it runs.
 
+A multi-GPU engine adds a third wall: the per-step cost of keeping N GPUs in lockstep (an all-reduce per
+layer, expert dispatch, and every kernel launched N times), which does not shrink as N grows. A 235B
+mixture-of-experts at TP=8 spent about 5% of each decode step reading weights and the rest in that
+overhead, which is why two TP=4 engines beat one TP=8 engine on every loaded shape (*Topology*).
+
 ### Which wall are you at?
 
 Every workload on every model is limited by one of two things at a time, and the fixes do not overlap:
@@ -518,6 +523,16 @@ A second, mechanical reason the single engine lost at 512: **one engine caps con
 `maxNumSeqs`** (256 by default), so half the requests queued behind the other half (cached p50 8.5 s
 against 5.1 s). Two engines hold 2 × 256 without changing anything.
 
+The same host also ran the bf16 build of the model (470 GB, TP=8 is the only fit). bf16 at TP=8 measured
+8.3 / 11.5 / 15.1 / 15.4 rps on the reference shape at 64 / 128 / 256 / 512 in flight, against 7.9 / 10.0 /
+13.1 / 13.4 for FP8 at TP=8 (which needs expert parallelism to start), so **at TP=8 the weight precision
+made no useful difference**. The arithmetic says why: the active parameters read per decode step are 22B
+× 2 bytes ÷ 8 GPUs ≈ 5.5 GB per GPU, about 1.6 ms of HBM time, in a step that measured around 30 ms. When
+the weight stream is 5% of the step, halving it cannot show. The step is spent in 94 layers of
+all-reduce, expert dispatch and small kernels in lockstep across eight GPUs: a fixed per-step cost that
+more GPUs do not shrink. FP8 was still worth 1.5× on this host (22.5 against 15.4 rps), but through the
+topology it unlocked (two engines at TP=4), not through faster arithmetic.
+
 **So: the smallest tensor-parallel degree that fits the weights with useful KV headroom, and as many
 engines as the host then allows.** In-engine data parallelism (`dataParallel: 2` × TP=4, one process,
 one load balancer target) was the worst of the three on every shape, as it was on two GPUs.
@@ -770,13 +785,16 @@ dispatch and combine.
 | FP8, TP=2, fast interconnect, at full load | **−13%** (142.5 vs 163.7) |
 | bf16, TP=4, PCIe-connected GPUs | **−18%** |
 | FP8 235B MoE, TP=4 × 2 engines, H100 NVLink, 512 in flight | **+5%** unique (23.6 vs 22.5 rps), **−10%** cached (85.8 vs 95.5) |
+| bf16 235B MoE, TP=8, H100 NVLink | **−7 to −15%** unique (13.1 vs 15.4 rps at 512), **−20%** cached (39.7 vs 46.8 at 256) |
 
 Two variables move the answer. **Interconnect:** each token routes to a handful of experts scattered
 across GPUs, and all-to-all punishes a slow link far harder than all-reduce. **Precision:** in FP8 the
 GPU finishes its share sooner, so communication is a larger fraction of the step.
 
-No correct default exists, so this project ships it off. Expect a gain in bf16 on a fast interconnect,
-a loss in FP8, and a significant loss over PCIe. Measure it: one flag, one restart.
+No correct default exists, so this project ships it off. The bf16 gain seen at TP=2 did not survive at
+TP=8 on the same class of interconnect: with 128 experts spread over eight GPUs the all-to-all touches
+every GPU on every layer, and the loss grew with the degree. Expect a loss in FP8, a significant loss over
+PCIe, and in bf16 a result that depends on the degree. Measure it: one flag, one restart.
 
 One case where it is not optional: a block-quantised FP8 checkpoint at a tensor-parallel degree that
 does not divide its expert size into whole tiles refuses to start without it (see *Tensor parallelism*).
