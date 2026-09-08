@@ -68,6 +68,22 @@ says otherwise, and NVFP4 checkpoints do not run on an H100. Measured on eight o
 matrix (*Choosing a model to host*, point 10): the H100 is +26% on the fp8 mixture-of-experts and +124%
 on a dense bf16 model, at roughly 1.8× the spot price per GPU-hour.
 
+What makes one GPU faster than another for this work is not its count or its memory size. Three
+things are:
+
+- **Memory bandwidth** sets decode speed: every generated token streams the active weights and the KV
+  cache out of memory once. GDDR7 at ~1,600 GB/s against HBM3 at 3,350 GB/s is 2.1×, which is why the
+  H100's lead is largest on bf16 (twice the bytes per token) and smallest on fp8.
+- **Tensor compute** sets prefill speed, and so time to first token and long-prompt throughput.
+- **Kernel maturity.** A GPU generation that is months old runs some kernels through fallback paths or
+  not at all (*Choosing a model to host*, point 8); part of any gap between generations is software
+  that will close.
+
+Memory size only decides what fits: a card with more of it holds more KV cache (96 GiB here against 80
+on the H100) and starts models the smaller card cannot. Read a GPU's bandwidth and its tensor
+throughput from the spec sheet, and *Interpreting your own measurements* turns them into a decode ceiling
+before you buy.
+
 Every g7e size carries the same GPU: 96 GiB of VRAM at about 1,600 GB/s (the Server Edition runs its GDDR7
 at 25 Gbps; the 1,792 GB/s often quoted is the workstation card). Larger sizes add GPUs, vCPU
 and host RAM.
