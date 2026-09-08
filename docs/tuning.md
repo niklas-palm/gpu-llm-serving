@@ -202,6 +202,21 @@ GPUs. Spare GPUs get an independent engine each; see *Topology: replicas or tens
 
 The degree must be a power of two (1, 2, 4, 8) and must divide the model's attention head count.
 
+**Block-quantised FP8 checkpoints add a third constraint.** Their weights are quantised in 128×128
+tiles, and tensor parallelism slices each expert's gate and up matrices along the intermediate
+dimension. Every slice must be whole tiles: `intermediate_size / tensorParallel` must be a multiple of
+128. A 235B mixture-of-experts checkpoint with an expert intermediate size of 1,536 started at TP=4
+(384 per GPU, three tiles) and refused TP=8 (192, a tile and a half) with:
+
+```
+ValueError: The output_size of gate's and up's weight = 192 is not divisible by weight quantization block_n = 128.
+```
+
+The engine exits within seconds, before any model loading, and ECS restarts it forever; see
+[troubleshooting.md](troubleshooting.md). Two ways out: stay at the degree that divides, or set
+`enableExpertParallel: true`, which places whole experts on GPUs instead of slicing them and so removes
+the constraint. bf16 weights have no tiles and no such limit.
+
 **If you raise the degree outside this project's config, raise `/dev/shm` too.** Workers exchange
 tensors through POSIX shared memory; with Docker's 64 MiB default any degree above 1 exits within
 seconds with `Insufficient space in /dev/shm`. The task definition here sets 8 GiB. TP=1 never touches

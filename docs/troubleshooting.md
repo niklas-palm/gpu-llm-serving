@@ -155,11 +155,25 @@ aws cloudformation describe-stacks --stack-name GpuLlmServing --region "$REGION"
   --query 'Stacks[0].[StackStatus,LastUpdatedTime]' --output text
 ```
 
-**Cause: capacity was changed while a deploy was still waiting for the ECS service to stabilise.**
+A stack update that touches the service waits silently for it to stabilise. CloudFormation waits for
+its own timeout, up to three hours; the stack is locked until then. Two things stop it stabilising.
 
-A stack update that touches the service waits silently for it to stabilise. Scaling the ASG to zero or
-changing the instance type during that wait leaves nothing to place tasks on, so it never does.
-CloudFormation waits for its own timeout; the stack is locked until then.
+**Cause A: capacity was changed while a deploy was still waiting.** Scaling the ASG to zero or changing
+the instance type during that wait leaves nothing to place tasks on.
+
+**Cause B: the new engine configuration cannot start, so the task crash-loops.** The service has no
+deployment circuit breaker (a restart loop is also how a spot reclaim recovers), so ECS keeps starting
+the task and CloudFormation keeps waiting. Check for a run of stopped tasks with exit code 1:
+
+```bash
+aws ecs list-tasks --cluster "$CLUSTER" --region "$REGION" --desired-status STOPPED --query 'taskArns' --output text
+aws logs tail "$LOG_GROUP" --since 30m --region "$REGION" | grep -E "Error|ValueError|RuntimeError" | head
+```
+
+The engine log names the cause. Seen so far: `not divisible by weight quantization block_n` (a
+block-quantised FP8 checkpoint at a tensor-parallel degree that does not divide its expert size into
+whole tiles; drop the degree or enable expert parallelism, see [tuning.md](tuning.md)), and the
+`maxModelLen` startup failure on a nearly full card.
 
 **Fix: cancel the update, let it roll back, then retry.**
 
@@ -171,7 +185,8 @@ aws cloudformation wait stack-update-rollback-complete \
   --stack-name GpuLlmServing --region "$REGION"
 ```
 
-**Avoiding it: do not change ASG capacity or `instanceType` while a deploy is in flight.**
+**Avoiding it: do not change ASG capacity or `instanceType` while a deploy is in flight, and after any
+engine configuration change watch the first task start before walking away.**
 
 ---
 
