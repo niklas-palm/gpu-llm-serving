@@ -540,6 +540,30 @@ even for public models; authenticated requests have a far higher limit.
 
 ---
 
+## Symptom: the engine fails to start after a `modelId` change, and the error names no cause
+
+The new task logs `WorkerProc initialization failed due to an exception in a background process` or a
+weight-loading traceback with nothing useful above it, and restarts every few minutes. The previous model
+worked on the same instance.
+
+**Cause: the host disk is full.** The weights cache is a host directory sized by the root volume (500 GiB
+here), and it keeps every model the instance has ever served. Two large checkpoints do not fit: a 236 GB
+FP8 build plus the 470 GB bf16 build of the same model overran the volume by a wide margin, and the
+download failed mid-file without saying so.
+
+```bash
+aws ssm start-session --target "$INSTANCE_ID" --region "$REGION"
+df -h /
+du -sh /opt/modelcache/hf/hub/models--*
+```
+
+**Fix: delete the cache directory of the model you no longer serve, then let the task restart.** The
+download resumes from the completed files. Delete `*.incomplete` blobs left by the failed attempts as
+well; they are not reused. If you switch models often, replace the instance instead (scale the ASG to
+zero and back), which gives you an empty volume.
+
+---
+
 ## Symptom: model loading takes far longer than expected
 
 **Cause A: the first task on a new instance is downloading the weights from Hugging Face.** Tens of

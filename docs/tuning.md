@@ -481,11 +481,46 @@ DP has **better decode** (45.3 against 41.3 tok/s) and **worse prefill and time-
 
 **Why DP wins the identical-prompt case is unexplained.** The middle row rules out cache affinity.
 
+Re-tested at eight GPUs with a 235B mixture-of-experts (`dataParallel: 2` × TP=4 with expert parallelism,
+against two separate TP=4 engines): 5.7 against 10.4 rps at 64 in flight, 13.1 against 22.5 at 512, and
+4,000-token unique prompts at 512 collapsed to 0.4 rps as every request queued behind one API server and
+the DP coordinator. Same GPUs, same weights, same flags apart from how the two halves are joined.
+
 Two further reasons for separate containers: a DP process is one load balancer target, so a sick
 replica inside it is invisible to health checks; and one process is one failure domain.
 
-To try it anyway, set `extraArgs: "--data-parallel-size 2"` and read the ENTRYPOINT note in
-[troubleshooting.md](troubleshooting.md) first.
+To try it anyway, set `dataParallel:` in `config.yaml` (it requires `enableExpertParallel: true`;
+synth refuses the combination otherwise) and measure against the same GPUs as separate engines.
+
+#### When the model needs several GPUs: the smallest degree that fits, then replicas
+
+The rule above was measured with a model that fits one GPU. It holds, harder, when the model does not.
+A 235B mixture-of-experts (22B active, FP8, 236 GB of weights) needs at least three 80 GB GPUs, so on an
+eight-GPU host the choice is two engines at TP=4 or one engine at TP=8. Same host, same model, same total
+offered load, unique 1,000-token prompts with 190-token answers:
+
+| In flight (whole host) | 2 engines × TP=4 | 1 engine × TP=8 (+EP) | 1 engine, DP=2 × TP=4 (+EP) |
+|---|---|---|---|
+| 64 | **10.4 rps**, p50 5.6 s | 7.9 rps, p50 8.2 s | 5.7 rps, p50 10.8 s |
+| 256 | **17.4 rps**, p50 12.5 s | 13.1 rps, p50 17.1 s | 10.3 rps, p50 21.4 s |
+| 512 | **22.5 rps**, p50 18.1 s | 13.4 rps, p50 27.6 s | 13.1 rps, p50 28.7 s |
+
+Long answers (800 tokens) at 512: 18.4 rps against 10.2. Long prompts (4,000 tokens, unique): 7 rps
+against 3.5, so **prefill over eight GPUs was half the prefill of two independent groups of four.**
+
+Doubling the tensor-parallel degree halves each GPU's share of the work but leaves the per-layer
+all-reduce and the per-step kernel launch count where they were, so one TP=8 step is not twice as fast
+as one TP=4 step, while two TP=4 engines really do run two steps at once. TP=8 won one case: cached
+prompts at low load (25.7 against 22.3 rps at 64 in flight), where a lightly loaded request gets eight
+GPUs instead of four. Under load the two engines won every shape.
+
+A second, mechanical reason the single engine lost at 512: **one engine caps concurrent sequences at
+`maxNumSeqs`** (256 by default), so half the requests queued behind the other half (cached p50 8.5 s
+against 5.1 s). Two engines hold 2 × 256 without changing anything.
+
+**So: the smallest tensor-parallel degree that fits the weights with useful KV headroom, and as many
+engines as the host then allows.** In-engine data parallelism (`dataParallel: 2` × TP=4, one process,
+one load balancer target) was the worst of the three on every shape, as it was on two GPUs.
 
 **Where each wins:**
 
@@ -670,6 +705,11 @@ the GPU idle.
 **Keep it well above the concurrency you load-test at**, or you are measuring this flag, not the
 hardware: requests past it queue instead of batching.
 
+The cap is per engine, so a host with N engines holds N × 256 before it binds. It bound exactly once in
+these measurements: one TP=8 engine given 512 in flight queued half of them (cached p50 8.5 s against
+5.1 s for two TP=4 engines holding 256 each). Raising it to 512 on the two-engine host changed nothing
+(22.6 against 22.5 rps), because it was never the limit there.
+
 **With long prompts the cap has to come from the KV cache, not from this flag.** The cache holds a fixed
 number of tokens: on this GPU with FP8 weights and an fp8 cache, about 63 GiB ÷ 48 KiB per token ≈
 1.3 million tokens. 256 sequences of 1,200 tokens fit ten times over; 256 sequences of 12,000 tokens do
@@ -686,7 +726,10 @@ prefill 19,069 → 19,274), as did cutting it 4× to 8k (prefill 49,603 vs 49,77
 never the constraint at this scale, so the default omits the flag.
 
 Measured again at 4,000-token prompts against the engine default: 16,384 changed no shape and no level by
-more than 1% (*Choosing a model to host*).
+more than 1% (*Choosing a model to host*). Measured a third time on a prefill-bound configuration built
+to give it a chance (a 235B mixture-of-experts at TP=4 on H100s, where 4,000-token unique prompts held a
+flat 7 rps from 64 to 512 in flight): 16,384 moved every shape by under 5%, inside run-to-run noise. The
+chunked-prefill budget is not what limits prefill; the tensor cores and the all-reduce are.
 
 ### `kvCacheDtype: fp8`
 
@@ -697,6 +740,18 @@ MXFP4) it was +5% on the reference shape and +7% on 4,000-token prompts, and it 
 At high concurrency the KV cache is roughly half of all decode memory traffic, and at concurrency 1
 almost none, so halving it is worth close to 10% with a full batch and nothing alone. Smaller entries
 also fit more requests in the same VRAM.
+
+**It is not a free win on every shape.** On H100s with a 235B mixture-of-experts at TP=4, fp8 gave the
+expected +5 to +12% on unique decode-heavy traffic (22.5 against 21.0 rps on the reference shape at 512;
+18.4 against 16.3 on 800-token answers), but **4,000-token prompts with a shared prefix ran 20 to 30%
+faster with `auto`** (81.7 against 67.3 rps at 512; 60.7 against 46.2 at 256, reproduced in a second fp8
+run at 63.4). That shape spends its time in attention over cached tokens, and the bf16 attention path was
+faster per token than the fp8-cache path in this engine version. At one request in flight the same
+pattern showed as 105 against 93 tokens per second.
+
+fp8 wins when the KV pool is the limit (more tokens fit, larger batches); bf16 wins when attention over
+long cached contexts is the limit. Which one you have is in the dashboard: high KV cache usage and
+preemptions point at fp8, a high prefix-cache hit rate with long prompts points at `auto`.
 
 **On by default here.** It is a lossy store for cached attention state; to rule that out, set
 `kvCacheDtype: auto`.
@@ -714,6 +769,7 @@ dispatch and combine.
 | bf16, TP=2, fast interconnect | **+15%** (138.4 vs 119.9) |
 | FP8, TP=2, fast interconnect, at full load | **−13%** (142.5 vs 163.7) |
 | bf16, TP=4, PCIe-connected GPUs | **−18%** |
+| FP8 235B MoE, TP=4 × 2 engines, H100 NVLink, 512 in flight | **+5%** unique (23.6 vs 22.5 rps), **−10%** cached (85.8 vs 95.5) |
 
 Two variables move the answer. **Interconnect:** each token routes to a handful of experts scattered
 across GPUs, and all-to-all punishes a slow link far harder than all-reduce. **Precision:** in FP8 the
@@ -721,6 +777,9 @@ GPU finishes its share sooner, so communication is a larger fraction of the step
 
 No correct default exists, so this project ships it off. Expect a gain in bf16 on a fast interconnect,
 a loss in FP8, and a significant loss over PCIe. Measure it: one flag, one restart.
+
+One case where it is not optional: a block-quantised FP8 checkpoint at a tensor-parallel degree that
+does not divide its expert size into whole tiles refuses to start without it (see *Tensor parallelism*).
 
 ---
 
