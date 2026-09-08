@@ -144,6 +144,9 @@ aws ec2 run-instances --region <region> --instance-type g7e.2xlarge --subnet-id 
   --query 'Instances[0].InstanceId' --output text   # then terminate it
 ```
 
+Add `--instance-market-options MarketType=spot` to probe the spot pool instead; the two pools differ, and
+an account may be able to get one and not the other.
+
 Deploy step 3 shows how to read the same answer from a running deploy within minutes rather than after
 CloudFormation's hour-long wait.
 
