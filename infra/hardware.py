@@ -601,13 +601,14 @@ def memory_pressure_warning(weight_bytes_per_gpu: int, tuning: dict,
 
 def decode_ceiling_tokens_per_sec(weight_bytes: int, tp: int, active_fraction: float = 1.0,
                                   bandwidth_gbs: int = GPU_MEMORY_BANDWIDTH_GBS) -> float:
-    """Upper bound on output tokens/sec for ONE request, from memory bandwidth alone.
+    """Upper bound on output tokens/sec for ONE request with nothing else in flight.
 
     Generating a token requires reading the activated weights out of VRAM, so this is a hard
-    physical limit: bandwidth divided by bytes-read-per-token. Real throughput lands below it, and
-    how far below is diagnostic - close to the ceiling means bandwidth-bound (a faster GPU would
-    help), far below means the bottleneck is elsewhere (communication or per-step overhead, where a
-    faster GPU would not help).
+    physical limit: bandwidth divided by bytes-read-per-token. Measured engines reach about a third
+    of it at one request in flight (per-kernel overhead), which is normal. It is NOT the ceiling
+    under load: a batch shares one weight read, and for a mixture of experts a large batch touches
+    nearly every expert, so the aggregate ceiling is batch * bandwidth / total weight bytes. See
+    docs/tuning.md, "Interpreting your own measurements".
 
     `active_fraction` is activated parameters over total. Dense models read everything, so 1.0. A
     mixture-of-experts model reads only the experts a token routes to, plus the always-active

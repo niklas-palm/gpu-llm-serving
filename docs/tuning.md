@@ -46,7 +46,9 @@ overhead. Two TP=4 engines beat one TP=8 engine on every loaded shape for that r
 
 ### Which wall are you at?
 
-Every workload on every model is limited by one of two things at a time, and the fixes do not overlap:
+Every workload on every model is limited by one of two things at a time, and the fixes do not overlap.
+The symptoms below point at it; *Interpreting your own measurements* has the one-command measurement
+(memory controller busy: ~50% prefill-bound, 75 to 80% decode-bound).
 
 | Signal | Prefill-bound (compute) | Decode-bound (bandwidth) |
 |---|---|---|
@@ -724,6 +726,38 @@ does nothing at concurrency 1.
 **The caveat is about concurrency, not the flag.** Every throughput figure here was measured with
 prompts that share a prefix; *Choosing an operating concurrency* gives both numbers. Sizing a fleet from
 the cached figure when your traffic has no shared prefix **under-provisions by about 2×**.
+
+#### Prefix caching is a routing decision
+
+The cache is per engine. A prefix computed on engine 3 helps only a request that reaches engine 3, and
+the load balancer sends each request to the next engine in turn. That is harmless for the one kind of
+reuse the cached figures above were measured with, a prefix every request shares, because every engine
+warms it up independently. It fails for every other kind: the second turn of a conversation, an agent
+loop resending its growing context, a tenant's document. Those hit their prefix about 1 in N times on N
+engines, and the fraction falls as the fleet grows.
+
+Measured on eight engines with six-turn conversations (a 600-token unique opener, 150-token answers,
+each turn resending the conversation so far), streamed, 120 s per level, fleet hit rate from the engine
+counters:
+
+| Routing | 512 in flight | p50 | Hit rate |
+|---|---|---|---|
+| Round robin (default) | 118.5 req/s | 4.27 s | 21% |
+| Load balancer cookie per session (`stickySessions: true`) | **135.3 req/s** | **3.69 s** | **75%** |
+| One engine, all turns on it, scaled ×8 | 149 req/s | 3.34 s | 74% |
+
+Every turn after the first can hit, which is 76% of the prompt tokens in this shape; the cookie reaches
+it, round robin gets a third of the way there (connection reuse between the CDN and the load balancer
+gives some accidental affinity). The engine-side gain is a modest +14% at this prompt length, because a
+1,000-token prefill is cheap on this GPU; the same mechanism on 8,000-token contexts is a multiple.
+Single-turn unique prompts measured 0% hits in both configurations, so nothing here changes the
+unique-prompt sizing figures.
+
+`stickySessions: true` turns on a one-hour load balancer cookie; the CDN forwards cookies both ways.
+The cost is balance: one upstream service calling with a single cookie jar pins all of its traffic to
+one engine, so leave it off unless clients keep a cookie per end-user conversation. The next step up is
+a router that knows which engine holds which prefix and the queue depth of each; this project does not
+include one (*What this project does not do*).
 
 ### `maxModelLen: 0` (the model's own maximum)
 
@@ -1498,23 +1532,65 @@ fast.
 
 ## Interpreting your own measurements
 
-Decode ceiling for your configuration:
+Two ceilings, from the spec sheet, and one direct measurement that says which wall you are at.
+
+**Ceiling 1, one request in flight:** the fastest a single request can decode.
 
 ```
-ceiling (tokens/sec) = GPU bandwidth ÷ (activated weight bytes ÷ tensor-parallel degree)
+per-request ceiling (tokens/sec) = GPU bandwidth ÷ (activated weight bytes ÷ tensor-parallel degree)
 ```
 
-`infra/hardware.py` has this as `decode_ceiling_tokens_per_sec`. For a mixture-of-experts model, use
-*activated* parameters, not total: typically 10–20%, so such models decode far faster than their size
-suggests.
+`infra/hardware.py` has this as `decode_ceiling_tokens_per_sec`. A 30B mixture-of-experts with 3B active
+parameters in fp8 on a 1,597 GB/s GPU: about 530 tokens/s. Measured at one in flight: 174 to 178
+tokens/s, a third of it. That is normal, not a fault: at batch 1 the step is 48 layers of small kernels
+and the memory controller is busy 39% of the time (measured below). Nothing in the configuration raises
+it; a faster GPU raises it only in proportion to its per-kernel speed.
 
-**The ratio of measured to ceiling is diagnostic:**
+**Ceiling 2, under load:** the most the engine can decode in aggregate. Every decode step reads the
+weights once for the whole batch, and for a mixture of experts the batch decides *which* weights: one
+token touches 8 of 128 experts, a batch of 64 touches nearly all of them. So under load the bytes per
+step approach the whole model, and the ceiling is:
 
-| Measured ÷ ceiling | Meaning | What helps |
+```
+aggregate ceiling (tokens/sec) = batch × GPU bandwidth ÷ (total weight bytes ÷ tensor-parallel degree)
+```
+
+Measured on the same engine, 100-token prompts, ~130-token answers, streamed:
+
+| In flight | Tokens/s per request | Aggregate tokens/s | Memory controller busy |
+|---|---|---|---|
+| 1 | 174 | 166 | 39% |
+| 4 | 109 | 416 | 55% |
+| 16 | 67 | 1,024 | 72% |
+| 64 | 47.5 | 2,901 | 77% |
+| 128 | 41.2 | 4,971 | 77% |
+| 256 | 32.5 | 7,760 | 68% (scheduler preempting) |
+
+At 128 in flight the engine takes 38.8 steps/s. Reading all 29 GiB of weights per step at that rate is
+1.2 TB/s, 75% of the GPU's bandwidth, which is what the memory controller reports. **Under load a
+mixture of experts decodes like a dense model of its total size, amortised over the batch.** That is why
+per-request speed falls from 174 to 41 while the aggregate rises 30×, and why the per-request column of
+a loaded benchmark can never be compared with ceiling 1.
+
+**The direct measurement.** GPU utilisation as normally reported (SM active) reads 98 to 100% for every
+shape above and says nothing. The memory controller's busy fraction does:
+
+```bash
+# on the instance (aws ssm start-session), while the load runs; mem = memory controller busy %
+nvidia-smi dmon -s um -d 2
+```
+
+| Memory controller busy | Meaning | What helps |
 |---|---|---|
-| **> 60%** | bandwidth-bound | a faster GPU, or fewer bytes per token (quantization) |
-| **20–40%** | overhead-bound | lower tensor parallelism, fewer GPUs, larger batches |
-| **< 20%** | something is wrong | check tensor parallelism and interconnect first |
+| **75 to 80%**, and it stays there as load grows | decode-bound, at the practical bandwidth limit | a GPU with more bandwidth, fewer bytes (fp8 weights, fp8 cache), more engines |
+| **about 50%**, flat as load grows | prefill-bound: the tensor cores and kernels are the limit | a GPU with more compute, fewer prompt tokens (prefix cache), more engines |
+| **about 40%** at one request in flight | latency-bound: per-kernel and per-layer overhead | nothing in the config; more requests use the idle bandwidth |
+| falling while SM active also falls | the scheduler is the limit: preemption, a full KV cache, or the client | fewer requests per engine, or the KV cache fixes in *troubleshooting.md* |
 
-Do this before buying hardware: a workload at 25% of its ceiling will not go faster on a card with
-twice the bandwidth.
+The same engine, 4,000-token prompts and 8-token answers: 48,000 input tokens/s from 16 in flight
+upward with the memory controller 52% busy. That is prefill-bound, at about 15% of the vendor's fp8
+tensor peak: the compute wall in practice is kernel efficiency, well below the roofline number.
+
+Do this before buying hardware. A decode-bound fleet at 77% gains from bandwidth; a prefill-bound fleet
+at 52% does not, and the cross-GPU comparison in *Choosing an instance type* could not tell the two
+apart on its own.
