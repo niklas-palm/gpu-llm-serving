@@ -838,9 +838,14 @@ driven from an in-region client. At 512 in flight, whole fleet:
 10. **A faster GPU pays in proportion to how bandwidth-bound the model is.** The same matrix on eight
     H100 80 GB (one `p5.48xlarge`, spot ~$20/h) against the eight g7e.2xlarge: +26% on the fp8
     mixture-of-experts, +82% on it in bf16, +70% on the dense 27B in fp8, +124% on the dense 27B in
-    bf16. Precision matters less there: fp8 over bf16 is +9% on the H100 against +58% here. Per GPU-hour
-    on spot (~$2.50 against ~$1.40) the g7e wins requests per dollar on the 3B-active model; the H100
-    wins on dense bf16 and on long prompts. Buy the GPU for the wall you are at.
+    bf16. Precision matters less there: fp8 over bf16 is +9% on the H100 against +58% here. Cost is
+    requests per second divided by dollars per hour, and spot prices move: at the prices seen on the
+    measurement day ($2.02 per g7e.2xlarge, $19.9 per p5.48xlarge, both spot), the fp8
+    mixture-of-experts came out even (5.8 against 5.9 req/s per dollar-hour), bf16 favoured the H100
+    by 50%, and the dense model by 40 to 75%. On-demand ($5.85 against $55.04) the same ratios hold.
+    Two things the ratio does not show: a g7e fleet grows one GPU at a time and 4-bit checkpoints
+    (+26 to 57% on this GPU) do not run on the H100, while p5 spot capacity was unavailable in every
+    EU region tried. Buy the GPU for the wall you are at, and recompute with the day's prices.
 11. **On a card the weights nearly fill, `maxModelLen` decides whether the engine starts.** The 30B in
     bf16 (57 GB) on an 80 GB H100 refused to start at the model's 262k default context: one maximum-
     length request needs 24 GiB of KV and 16 GiB were left. `maxModelLen: 32768` started it. The same
