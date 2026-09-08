@@ -103,6 +103,7 @@ class ServingStack(Stack):
         # YAML was truthy everywhere it was read - silently turning spot ON for someone who had
         # written it off.
         use_spot = _flag(cfg.get("useSpot"), "useSpot")
+        sticky_sessions = _flag(cfg.get("stickySessions"), "stickySessions")
 
         # The model's parameter count is not knowable at synth time without a network call, so it is
         # an ESTIMATE, defaulting to a size that suits a single 96 GiB GPU. `estimatedParamsBillions`
@@ -465,6 +466,14 @@ class ServingStack(Stack):
             # streamed answer that runs longer than 180 s still dies when its task is replaced.
             deregistration_delay=Duration.seconds(180),
         )
+        # Prefix caching is per engine. Round robin sends the next turn of a conversation to a random
+        # engine, so on N engines a follow-up hits its cached prefix about 1/N of the time. A load
+        # balancer cookie pins a client's session to one engine: measured on eight engines, multi-turn
+        # traffic went from a 21% to a 75% hit rate and +14% throughput. Off by default because one
+        # upstream client with one cookie jar would pin all of its traffic to a single engine.
+        # docs/tuning.md, "Prefix caching is a routing decision".
+        if sticky_sessions:
+            target_group.enable_cookie_stickiness(Duration.hours(1))
 
         listener.add_action(
             "AuthedForward", priority=10,

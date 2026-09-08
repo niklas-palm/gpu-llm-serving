@@ -1320,3 +1320,17 @@ def test_the_entrypoint_passes_data_parallel_only_when_above_one(tmp_path):
     assert code == 0 and argv[argv.index("--data-parallel-size") + 1] == "2"
     code, argv, _ = _run_entrypoint(tmp_path, DATA_PARALLEL="1")
     assert code == 0 and "--data-parallel-size" not in argv
+
+
+def test_sticky_sessions_is_a_cookie_on_the_target_group_and_off_by_default():
+    """Prefix caching is per engine; a load balancer cookie keeps a conversation on the engine that holds
+    its prefix. Off by default: one upstream client would pin everything to one engine."""
+    tg = only(synth(stickySessions=True), "AWS::ElasticLoadBalancingV2::TargetGroup")
+    attrs = {a["Key"]: a["Value"] for a in tg["TargetGroupAttributes"]}
+    assert attrs["stickiness.enabled"] == "true" and attrs["stickiness.type"] == "lb_cookie"
+    assert attrs["stickiness.lb_cookie.duration_seconds"] == "3600"
+    tg = only(synth(), "AWS::ElasticLoadBalancingV2::TargetGroup")
+    attrs = {a["Key"]: a["Value"] for a in tg.get("TargetGroupAttributes", [])}
+    assert attrs.get("stickiness.enabled", "false") == "false"
+    with pytest.raises(ConfigError):
+        synth(stickySessions="yes please")

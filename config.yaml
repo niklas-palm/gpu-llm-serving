@@ -87,6 +87,14 @@ maxInstanceCount: 24
 # docs/tuning.md, "scalingRequestsPerTarget: derive it, do not inherit it".
 scalingRequestsPerTarget: 445
 
+# Pin each client's session to one engine with a load balancer cookie (one hour). Prefix caching is per
+# engine, so without this the next turn of a conversation hits its cached prefix about 1/N of the time
+# on N engines: measured 21% against 75% hit rate and +14% throughput on eight engines. Turn it on
+# when your clients keep cookies per end-user conversation. Leave it off when one upstream service
+# calls with a single cookie jar: it would pin all of its traffic to one engine.
+# docs/tuning.md, "Prefix caching is a routing decision".
+stickySessions: false
+
 # Spot: cheaper, and often the only way to get this GPU class. A spot g7e.2xlarge launched in 22 s
 # after 300+ on-demand failures for larger sizes. Off by default because interruption is real.
 # Two traps: spot has a separate vCPU quota (L-3819A6DF, default 64), and suspending ASG processes to
