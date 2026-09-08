@@ -211,7 +211,9 @@ is measured on the 2-GPU size and follows the same path up to 8. One size per st
 fleet is not supported, because a capacity provider's Auto Scaling group cannot weight instances by GPU
 count. For a model that fits one GPU, several small instances are cheaper per GPU than one large one and
 lose one engine, not eight, to a spot reclaim (*Choosing an instance type* in
-[docs/tuning.md](docs/tuning.md)).
+[docs/tuning.md](docs/tuning.md)). For a model that needs several GPUs, set `tensorParallel` to the
+smallest degree that fits and let `replicas: 0` fill the rest: two TP=4 engines measured 22.5 req/s on
+eight H100s where one TP=8 engine measured 13.4 (*Topology* in [docs/tuning.md](docs/tuning.md)).
 
 **Sizing and scaling, in short.** One g7e.2xlarge engine sustains about 16,000 input tokens/s at fp8;
 divide by your average input tokens per request for its requests/s. Size `instanceCount` for steady

@@ -42,7 +42,7 @@ A third follows from the first two and decides which lever works:
 A multi-GPU engine adds a third wall: the per-step cost of keeping N GPUs in lockstep (an all-reduce per
 layer, expert dispatch, and every kernel launched N times), which does not shrink as N grows. A 235B
 mixture-of-experts at TP=8 spent about 5% of each decode step reading weights and the rest in that
-overhead, which is why two TP=4 engines beat one TP=8 engine on every loaded shape (*Topology*).
+overhead. Two TP=4 engines beat one TP=8 engine on every loaded shape for that reason (*Topology*).
 
 ### Which wall are you at?
 
@@ -77,7 +77,7 @@ What makes one GPU faster than another for this work is not its count or its mem
 things are:
 
 - **Memory bandwidth** sets decode speed: every generated token streams the active weights and the KV
-  cache out of memory once. GDDR7 at ~1,600 GB/s against HBM3 at 3,350 GB/s is 2.1×, which is why the
+  cache out of memory once. GDDR7 at ~1,600 GB/s against HBM3 at 3,350 GB/s is 2.1×, so the
   H100's lead is largest on bf16 (twice the bytes per token) and smallest on fp8.
 - **Tensor compute** sets prefill speed, and so time to first token and long-prompt throughput.
 - **Kernel maturity.** A GPU generation that is months old runs some kernels through fallback paths or
@@ -358,7 +358,7 @@ only on quality grounds.
 
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
-another ~15 GiB. Output quality was not measured, the same caveat as AWQ below, which is why FP8 stays
+another ~15 GiB. Output quality was not measured, the same caveat as AWQ below, so FP8 stays
 the default. To use it, set `modelId` to the NVFP4 checkpoint and clear `quantization`.
 
 **Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
@@ -566,10 +566,13 @@ For throughput, in order:
 ## Larger instances: what is measured and what is not
 
 **Measured:** one GPU at TP=1, and two GPUs three ways (TP=2, TP=1 with one GPU idle, 2 × TP=1
-replicas) at concurrency 256, cached and uncached.
+replicas) at concurrency 256, cached and uncached, on this GPU. On eight H100s (`p5.48xlarge`): eight
+engines at TP=1 with models that fit one GPU, and a 235B mixture-of-experts that does not, as 2 × TP=4,
+1 × TP=8 and DP=2 × TP=4, with and without expert parallelism (*Topology*).
 
-**Not measured: TP=4 and TP=8.** Four- and eight-GPU instances of this generation were not obtainable
-during testing.
+**Not measured: TP=4 and TP=8 on this GPU.** Four- and eight-GPU instances of this generation were not
+obtainable during testing. The H100 results are the best guide: the collective cost grew with the
+degree there and the interconnect is faster, so expect no better here.
 
 **First, check you want an 8-GPU instance at all**; if the model fits on one GPU, single-GPU instances
 are cheaper for the same throughput (*For a model that fits one GPU, buy the smallest instance*).
@@ -615,8 +618,9 @@ In order:
    with **two** engines, not eight; an 8-GPU instance has proportionally more host per GPU, but four
    times the engines is well outside what was tested.
 2. **8 × TP=1 against 4 × TP=2 on your own prompts.** The crossover is prefix-sharing.
-3. **8 × TP=1 against 1 × TP=8.** Expected to lose badly, but nobody has measured TP=8 on this
-   hardware.
+3. **8 × TP=1 against 1 × TP=8.** Measured on H100s with a model that needs the GPUs: two TP=4
+   engines beat one TP=8 engine by 40% at load. With a model that fits one GPU the gap can only be
+   wider.
 
 If host contention bites at 8 engines, the fix is fewer, wider engines: 4 × TP=2.
 
@@ -959,7 +963,16 @@ driven from an in-region client. At 512 in flight, whole fleet:
     length request needs 24 GiB of KV and 16 GiB were left. `maxModelLen: 32768` started it. The same
     card then hit 100% KV and 150 preemptions under 4,000-token prompts at 64 per engine: bf16 on 80 GB
     is KV-starved for long prompts. On 96 GB nothing of this shows.
-12. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
+12. **A model that needs several GPUs pays a third tax, and the topology decides how much.** Beyond
+    compute and bandwidth there is the cost of keeping N GPUs in lockstep: an all-reduce per layer,
+    expert dispatch, every kernel launched N times. A 235B mixture-of-experts (22B active) on eight
+    H100s spent about 5% of each decode step reading weights and the rest in that overhead, so bf16
+    and FP8 measured the same at TP=8, and two TP=4 engines beat one TP=8 engine by 40% (*Topology*).
+    Per request it cost about six times what a 30B mixture-of-experts (3B active) cost on the same
+    dollar basis: partly the seven times more active parameters, partly the lockstep. The rule that
+    follows: the smallest tensor-parallel degree that fits, then replicas, and FP8 because it lowers
+    that degree, not because the arithmetic is faster.
+13. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
     37 s in the first shape after every deploy on both GPU families (lazy kernel compilation and
     autotuning), then ran with p95 5 to 9 s. The benchmark script's `--warmup-seconds` covers the
     first requests; for such models run a throwaway minute first.

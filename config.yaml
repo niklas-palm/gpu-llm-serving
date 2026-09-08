@@ -182,7 +182,11 @@ extraEnv: {}
 # Leave these unless you have a reason; docs/tuning.md has the numbers behind each one.
 tuning:
   # 0 = derive the smallest degree whose combined VRAM holds the model.
-  # Tensor parallelism makes a model fit across GPUs. It does not make a fitting model faster.
+  # Tensor parallelism makes a model fit across GPUs. It does not make a fitting model faster, and a
+  # model that needs several GPUs still wants the smallest degree that fits: on eight GPUs, two engines
+  # at TP=4 measured 22.5 req/s against 13.4 for one engine at TP=8, same model, same load.
+  # Block-quantised FP8 checkpoints refuse degrees that split an expert into partial 128-wide tiles.
+  # docs/tuning.md, "Tensor parallelism" and "Topology".
   tensorParallel: 0
 
   # Max tokens per request, input + output. 0 = the model's own maximum.
@@ -192,11 +196,13 @@ tuning:
   # card needed 32768). docs/tuning.md, "maxModelLen".
   maxModelLen: 0
 
-  # Ceiling on concurrent sequences, not a reservation. Keep it above the concurrency you load-test
-  # at, or the flag is what you measure.
+  # Ceiling on concurrent sequences per engine, not a reservation; N engines hold N x this. Keep it
+  # above the concurrency each engine will see, or the flag is what you measure: one TP=8 engine given
+  # 512 requests queued half of them.
   maxNumSeqs: 256
 
-  # Token budget per scheduler step. 0 = engine default. No measured effect from 8k to 64k.
+  # Token budget per scheduler step. 0 = engine default. No measured effect from 8k to 64k, on one GPU
+  # or on a prefill-bound TP=4 engine.
   maxNumBatchedTokens: 0
 
   # Fraction of each GPU vLLM may claim. 0.95 measured +27% over the 0.90 default (the KV cache is
@@ -207,6 +213,8 @@ tuning:
 
   # KV cache precision, independent of weight precision. "fp8" measured +12% decode, growing with
   # concurrency. "auto" keeps the model's precision.
+  # Not a win on every shape: on H100s, long prompts with a shared prefix ran 20 to 30% faster with
+  # "auto" (attention over cached tokens is that shape's cost). docs/tuning.md, "kvCacheDtype".
   # With unquantised weights use "auto": fp8 packs more tokens in, batches grow, and it runs out of
   # VRAM under load. `cdk synth` warns on the combination.
   kvCacheDtype: fp8
@@ -218,7 +226,8 @@ tuning:
   enablePrefixCaching: true
 
   # Mixture-of-experts only: pin whole experts to GPUs instead of sharding each across them.
-  # Measured -13% in FP8 and +15% in bf16 on the same two GPUs. Measure it: one flag, one restart.
+  # Measured -13% in FP8 and +15% in bf16 on two GPUs; -7 to -20% in bf16 on eight. Measure it: one
+  # flag, one restart. Required for block-quantised FP8 at a degree that would split an expert's tiles.
   enableExpertParallel: false
 
   # Mixture-of-experts only, with enableExpertParallel on: attention groups inside ONE engine, each with
