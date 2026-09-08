@@ -134,8 +134,18 @@ aws ec2 get-spot-placement-scores --region <region> --region-names <region> \
   --query 'SpotPlacementScores[].[AvailabilityZoneId,Score]' --output text     # 10 is best, 1 is none
 ```
 
-For on-demand there is no such API; the only test is a launch. Deploy step 3 shows how to read the
-answer within minutes rather than after CloudFormation's hour-long wait.
+For on-demand there is no such API; the only test is a launch. The cheap version is one instance per
+zone, terminated the moment it exists (a minute of billing when it succeeds, an immediate
+`InsufficientInstanceCapacity` when it does not), in any subnet you have:
+
+```bash
+aws ec2 run-instances --region <region> --instance-type g7e.2xlarge --subnet-id <subnet> --count 1 \
+  --image-id "$(aws ssm get-parameter --region <region> --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 --query Parameter.Value --output text)" \
+  --query 'Instances[0].InstanceId' --output text   # then terminate it
+```
+
+Deploy step 3 shows how to read the same answer from a running deploy within minutes rather than after
+CloudFormation's hour-long wait.
 
 ### Check the instance type exists where you are deploying
 
