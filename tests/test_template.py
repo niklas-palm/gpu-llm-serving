@@ -1138,7 +1138,7 @@ def test_an_api_key_the_load_balancer_would_mismatch_is_rejected_at_synth(bad):
 def _run_entrypoint(tmp_path, **env):
     """Run container/serve with a fake `vllm` on PATH that records its argv, NUL-separated."""
     import subprocess
-    fake = tmp_path / "bin"; fake.mkdir()
+    fake = tmp_path / "bin"; fake.mkdir(exist_ok=True)
     (fake / "vllm").write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$ARGV_OUT"\n')
     (fake / "vllm").chmod(0o755)
     out = tmp_path / "argv"
@@ -1303,3 +1303,20 @@ def test_extra_env_reaches_the_engine_and_cannot_shadow_the_stack_variables():
     with pytest.raises(ConfigError, match="extraEnv must be a"):
         synth(extraEnv=["A=B"])
     assert "EXTRA_ENV" not in {e["Name"] for e in vllm_container(synth())["Environment"]}, "empty adds nothing"
+
+
+def test_data_parallel_reaches_the_container_as_a_gpu_reservation_and_a_flag():
+    """dp attention groups need tp x dp GPUs in one container, and the entrypoint passes the size on."""
+    c = vllm_container(synth(instanceType="p5.48xlarge", estimatedParamsBillions=235, quantization="fp8",
+                             tuning={"tensorParallel": 4, "dataParallel": 2, "enableExpertParallel": True}))
+    env = {e["Name"]: e["Value"] for e in c["Environment"]}
+    assert env["DATA_PARALLEL"] == "2" and env["TENSOR_PARALLEL"] == "4"
+    gpu = [r for r in c["ResourceRequirements"] if r["Type"] == "GPU"][0]
+    assert gpu["Value"] == "8"
+
+
+def test_the_entrypoint_passes_data_parallel_only_when_above_one(tmp_path):
+    code, argv, _ = _run_entrypoint(tmp_path, DATA_PARALLEL="2", TENSOR_PARALLEL="4")
+    assert code == 0 and argv[argv.index("--data-parallel-size") + 1] == "2"
+    code, argv, _ = _run_entrypoint(tmp_path, DATA_PARALLEL="1")
+    assert code == 0 and "--data-parallel-size" not in argv

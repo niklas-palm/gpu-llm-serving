@@ -251,6 +251,7 @@ DEFAULT_TUNING = {
     "enablePrefixCaching": True,    # load-bearing at high concurrency, not an optimisation
     "kvCacheDtype": "fp8",          # +12% decode, and the gain grows with concurrency
     "enableExpertParallel": False,  # -13% in FP8; +15% in bf16, so it stays configurable
+    "dataParallel": 1,              # in-engine data parallelism; >1 only with expert parallelism on a MoE
     "replicas": 0,                  # 0 = one engine per GPU, which is the measured best topology
 }
 # `enforceEager` is absent above. It is not a knob to tune, it is a trap: see the
@@ -460,12 +461,26 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
 
     # 0 means "derive": one engine per GPU. Resolved by resolve_topology once the tensor-parallel
     # degree is known, since the two are linked - replicas x tensorParallel must equal the GPU count.
+    # In-engine data parallelism: one engine owns tp x dp GPUs and runs dp attention groups over its own
+    # request batches with the experts sharded across all of them (the MoE-serving topology). Without
+    # expert parallelism it is only a more expensive way to run replicas, so it is refused.
+    dp = _num(_given(t["dataParallel"], 1), "dataParallel", minimum=1)
+    if dp > 1 and not _flag(t.get("enableExpertParallel"), "enableExpertParallel"):
+        raise ConfigError(
+            f"dataParallel={dp} without enableExpertParallel: true is just replicas with more overhead.\n"
+            "  For independent engines use `replicas`; data parallelism inside one engine pays only when\n"
+            "  the experts are sharded across its GPUs."
+        )
+    if dp > inst.gpus:
+        raise ConfigError(f"dataParallel={dp} needs {dp} GPUs but {inst.name} has {inst.gpus}.")
+    t["dataParallel"] = dp
+
     replicas = _num(_given(t["replicas"], 0), "replicas")
     if replicas < 0:
         raise ConfigError("replicas must be 0 (one engine per GPU) or a positive integer.")
-    if tp and replicas and replicas * tp > inst.gpus:
+    if tp and replicas and replicas * tp * dp > inst.gpus:
         raise ConfigError(
-            f"replicas={replicas} x tensorParallel={tp} needs {replicas * tp} GPUs, "
+            f"replicas={replicas} x tensorParallel={tp} x dataParallel={dp} needs {replicas * tp * dp} GPUs, "
             f"but {inst.name} has {inst.gpus}.\n"
             f"  Each replica gets its own GPUs; they are not shared."
         )
@@ -530,7 +545,7 @@ def resolve_topology(inst: Instance, tuning: dict, weight_bytes: int) -> dict:
             # asks for.
             gpu_memory_utilization=t["gpuMemoryUtilization"])
     if not t.get("replicas"):
-        t["replicas"] = max(1, inst.gpus // t["tensorParallel"])
+        t["replicas"] = max(1, inst.gpus // (t["tensorParallel"] * t["dataParallel"]))
     # Re-validate: a derived pair still has to satisfy replicas x tp <= gpus, and an explicit
     # tensorParallel combined with a derived replica count is the case most likely to overshoot.
     return validate_tuning(inst, t)

@@ -221,6 +221,13 @@ tuning:
   # Measured -13% in FP8 and +15% in bf16 on the same two GPUs. Measure it: one flag, one restart.
   enableExpertParallel: false
 
+  # Mixture-of-experts only, with enableExpertParallel on: attention groups inside ONE engine, each with
+  # its own request batch, sharing the experts sharded across all of the engine's tensorParallel x
+  # dataParallel GPUs. The load balancer then sees one target per engine. 1 = off. Refused without
+  # expert parallelism, where it is only replicas with more overhead.
+  # docs/tuning.md, "Topology: replicas or tensor parallelism?".
+  dataParallel: 1
+
   # Independent engines per instance, load-balanced by the ALB.
   # 0 = GPUs / tensorParallel, one engine per GPU. Measured best topology: splitting one model across
   # GPUs puts them in lockstep with an all-reduce per layer. Host memory is divided by this number.

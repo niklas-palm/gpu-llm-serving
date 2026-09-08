@@ -561,6 +561,7 @@ class ServingStack(Stack):
             "MODEL_ID": cfg["modelId"],
             "PORT": str(CONTAINER_PORT),
             "TENSOR_PARALLEL": str(tuning["tensorParallel"]),
+            "DATA_PARALLEL": str(tuning["dataParallel"]),
             # 0 means "omit the flag and let the engine choose" for both of these.
             "MAX_MODEL_LEN": str(tuning["maxModelLen"]),
             "MAX_NUM_BATCHED_TOKENS": str(tuning["maxNumBatchedTokens"]),
@@ -598,7 +599,7 @@ class ServingStack(Stack):
             # Derived from HOST RAM, not GPU count - see hardware.py for why that distinction
             # matters. ECS reserves the whole amount, so this also caps replicas per instance.
             memory_limit_mib=inst.container_memory_mib // tuning["replicas"],
-            gpu_count=tuning["tensorParallel"],
+            gpu_count=tuning["tensorParallel"] * tuning["dataParallel"],
             environment=env,
             secrets=container_secrets or None,
             # Non-blocking: the default mode blocks the engine's stdout when CloudWatch Logs is

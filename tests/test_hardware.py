@@ -532,3 +532,19 @@ def test_natively_4bit_families_without_a_marker_in_the_id_are_still_sized_as_4b
     it was 240 GB and 'did not fit' a card it fits with room to spare."""
     assert bytes_per_param_for("openai/gpt-oss-120b", "") == 0.5
     assert derive_tensor_parallel(get_instance("g7e.2xlarge"), model_bytes(120, 0.5)) == 1
+
+
+def test_data_parallel_reserves_tp_times_dp_gpus_and_needs_expert_parallelism():
+    """In-engine data parallelism shards the experts across dp attention groups; the container must own
+    tensorParallel x dataParallel GPUs, replicas divide what is left, and without expert parallelism the
+    setting is refused because it would only be replicas with extra overhead."""
+    p5 = get_instance("p5.48xlarge")
+    t = resolve_topology(p5, {"tensorParallel": 4, "dataParallel": 2, "enableExpertParallel": True}, model_bytes(235, 1.0))
+    assert (t["tensorParallel"], t["dataParallel"], t["replicas"]) == (4, 2, 1)
+    t = resolve_topology(p5, {"tensorParallel": 2, "dataParallel": 2, "enableExpertParallel": True}, model_bytes(30, 1.0))
+    assert t["replicas"] == 2, "8 GPUs / (2 x 2)"
+    with pytest.raises(ConfigError, match="without enableExpertParallel"):
+        validate_tuning(p5, {"tensorParallel": 4, "dataParallel": 2})
+    with pytest.raises(ConfigError, match="needs 16 GPUs"):
+        validate_tuning(p5, {"tensorParallel": 4, "dataParallel": 2, "replicas": 2, "enableExpertParallel": True})
+    assert validate_tuning(get_instance("g7e.2xlarge"), {})["dataParallel"] == 1, "off by default"
