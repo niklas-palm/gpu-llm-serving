@@ -81,8 +81,24 @@ things are:
   H100's lead is largest on bf16 (twice the bytes per token) and smallest on fp8.
 - **Tensor compute** sets prefill speed, and so time to first token and long-prompt throughput.
 - **Kernel maturity.** A GPU generation that is months old runs some kernels through fallback paths or
-  not at all (*Choosing a model to host*, point 8); part of any gap between generations is software
+  not at all (*Choosing a model to host*, point 8, and the kernel note under *The evidence*); part of any
+  gap between generations is software
   that will close.
+
+The two GPUs measured here differ by about the same factor on both walls, so a cross-GPU delta alone
+cannot say which wall a workload is at:
+
+| | RTX PRO 6000 Blackwell Server Edition (g7e) | H100 SXM (p5) | Ratio |
+|---|---|---|---|
+| Memory bandwidth | 1,597 GB/s | 3,350 GB/s | 2.1× |
+| Dense bf16 tensor throughput (vendor peak, no sparsity) | ~0.5 PFLOPS | ~1.0 PFLOPS | ~2× |
+| Dense fp8 tensor throughput | ~1.0 PFLOPS | ~2.0 PFLOPS | ~2× |
+| GPU to GPU | PCIe 5.0, ~64 GB/s per direction | NVLink, ~450 GB/s per direction | ~7× |
+
+A workload that is bound by either wall should run about 2× faster on the H100. The dense 27B in bf16
+did (+124%). The fp8 mixture-of-experts did not (+26%): on both cards it is limited by something that
+did not double, which points at per-step overhead and kernel efficiency rather than at either wall.
+*Which wall are you at?* has the direct measurement.
 
 Memory size only decides what fits: a card with more of it holds more KV cache (96 GiB here against 80
 on the H100) and starts models the smaller card cannot. Read a GPU's bandwidth and its tensor
@@ -134,9 +150,9 @@ GPUs' worth of VRAM, not for 8 GPUs of throughput.
 
 Unique prompts, same engine configuration, on a `g7e.2xlarge` with a third of the host per GPU:
 
-| | vCPU for its GPU | Uncached prefill @128 | Decode | p95 |
+| | vCPU given to the engine | Uncached prefill @128 | Decode | p95 |
 |---|---|---|---|---|
-| One GPU of a `g7e.12xlarge` | 48 | 16,176 | 35.5 | 7.37 s |
+| One engine on a `g7e.12xlarge`, the whole host (48 vCPU, second GPU idle) | 48 | 16,176 | 35.5 | 7.37 s |
 | **`g7e.2xlarge`** | **8** | **16,195** | 36.5 | 7.35 s |
 
 Identical, +0.1%.
@@ -156,6 +172,10 @@ One engine, pinned to a subset of one instance's CPUs with `taskset`; only CPU c
 | 48 | 30,024 | 46,747 | 16,176 | 21,665 |
 | 8 | 29,888 | 46,645 | 15,886 | 22,549 |
 | 4 | 29,691 | **32,455** | 15,969 | 21,691 |
+
+The 21,665 in the first row is also the TP=2 figure in *How to spend two GPUs*; the two runs were
+consecutive and the coincidence has not been re-measured. Read the CPU rows against each other, not
+against other tables.
 
 **Roughly 8 vCPU per engine is enough, and more is not better.** 8 to 48 changes nothing measurable in
 any column.
@@ -308,20 +328,21 @@ They interact in one direction:
 Every row **meets** the latency budget, at the highest concurrency where it does. Plan against the
 unique-prompt column unless you know your prompts share a prefix:
 
-| Weights | Unique prompts | Instances | Shared prefix | Instances |
+| Weights | Unique prompts | GPUs | Shared prefix | GPUs |
 |---|---|---|---|---|
 | AWQ 4-bit ⚠ | **33,496** @256 | **2.1** | **82,112** @512 | **0.9** |
 | official FP8 | 32,467 @256 | 2.2 | 74,687 @512 | 0.9 |
 | load-time FP8 | 28,363 @256 | 2.5 | 75,368 @512 | 0.9 |
 | bf16 | 15,805 @128 | 4.4 | 46,808 @256 | 1.5 |
 
-Prefill tokens/sec on two GPUs as 2 × TP=1 with an fp8 KV cache (`auto` for the bf16 row); instances
-to serve a fixed 70,000 input tok/s.
+Prefill tokens/sec on two GPUs as 2 × TP=1 with an fp8 KV cache (`auto` for the bf16 row); GPUs to
+serve a fixed 70,000 input tok/s. One `g7e.2xlarge` is one GPU, so this is also the instance count on
+that size; *How to size N* derives the same number from a single-GPU measurement.
 
 Only the unique-prompt column shows:
 
 - **Unquantised weights cost most without prefix reuse.** 15,805 against 46,808 with cache hits: 4.4
-  instances rather than 1.5.
+  GPUs rather than 1.5.
 - **The operating concurrency drops to 256 across the board**: per-request decode falls through the
   latency floor before throughput peaks.
 
@@ -481,15 +502,17 @@ constructed to favour DP's routing. DP lost it by 11%.
 workloads. Use one container per GPU.
 
 DP has **better decode** (45.3 against 41.3 tok/s) and **worse prefill and time-to-first-token**
-(3.05 s against 1.84 s): every request queues behind one API server. On unique prompts at concurrency
+(3.05 s against 1.84 s). The engine runs one API server per data-parallel rank, so the frontend is not
+the cause. With expert parallelism the ranks step in lockstep, every forward pass waits for the slower
+attention group, and one busy rank stalls the other. On unique prompts at concurrency
 256 it also fails the latency budget, p95 8.57 s against 8 s.
 
 **Why DP wins the identical-prompt case is unexplained.** The middle row rules out cache affinity.
 
 Re-tested at eight GPUs with a 235B mixture-of-experts (`dataParallel: 2` × TP=4 with expert parallelism,
 against two separate TP=4 engines): 5.7 against 10.4 rps at 64 in flight, 13.1 against 22.5 at 512, and
-4,000-token unique prompts at 512 collapsed to 0.4 rps as every request queued behind one API server and
-the DP coordinator. Same GPUs, same weights, same flags apart from how the two halves are joined.
+4,000-token unique prompts at 512 collapsed to 0.4 rps as one rank's prefill backlog held the other
+rank's step. Same GPUs, same weights, same flags apart from how the two halves are joined.
 
 Two further reasons for separate containers: a DP process is one load balancer target, so a sick
 replica inside it is invisible to health checks; and one process is one failure domain.
@@ -674,7 +697,8 @@ same hardware crashed under load.
    | FP8 | **fp8** | +12% decode, and 29 GiB of weights leaves ample headroom |
    | bf16 | **default** | fp8 either crashes or, once made safe, is slower than not doing it |
 
-**Do not bother with `--kv-cache-memory`**, even though the engine suggests it at startup:
+**`--kv-cache-memory` changes nothing measurable; use it for a fixed pool, not for speed.** The engine
+suggests it at startup:
 
 ```
 Actual usage is 52.7 GiB for consumed memory (weights + non-torch), 5.65 GiB for peak
@@ -682,7 +706,10 @@ activation, and 0.47 GiB for CUDAGraph memory. Replace gpu_memory_utilization co
 `--kv-cache-memory=38082119680` (35.47 GiB) to fully utilize gpu memory.
 ```
 
-It is a **no-op**: setting it explicitly measured 74,491 against 74,687 prefill for the fraction alone.
+On throughput it is a no-op: set explicitly it measured 74,491 against 74,687 prefill for the fraction
+alone. What it does change is that the pool is an absolute size, independent of what else is resident on
+the GPU, so every host gets the same cache and a result reproduces. That is worth having on a card the
+weights nearly fill, where 0.95 has crashed under load (*troubleshooting.md*).
 
 ### `enablePrefixCaching: true`: always on, but read the caveat
 
@@ -899,8 +926,16 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 27B dense, NVFP4 (community build) | 42.5 (10.5 s) | 44 | 52,000 | 9.8 |
 | 27B dense, fp8 | 33.8 (13.2 s) | 34 | 33,000 | 8.5 |
 | 27B dense, bf16 | 19.0 (20.6 s) | 38 | 13,000, saturated | 4.7 |
-| 120B MoE (5B active), MXFP4 | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
+| 120B MoE (5B active), MXFP4, Marlin kernel (see note) | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
 | 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
+
+Which kernel ran matters as much as which weights. The startup log names it. On this GPU the 120B
+MXFP4 experts ran through the Marlin backend, which dequantises to bf16 for the matmul; in vLLM 0.28.0
+that is the only MXFP4 path it offers this GPU generation, and on the H100 the same model used the
+Triton MXFP4 kernel. The 27B NVFP4 build ran on the native FlashInfer CUTLASS FP4 kernel here. Read the
+lines `Using '...' Mxfp4 MoE backend`, `Using ... NvFp4 MoE backend`, `Using ... attention backend` and
+`Using ... Fp8 MoE backend` before comparing two GPUs or two formats; the numbers in this document carry
+the kernels of 0.28.0 and no other release.
 
 ### What generalises
 
@@ -1431,7 +1466,9 @@ sidecar can remote-write to Amazon Managed Service for Prometheus by swapping th
 
 ### What happens when a container is overloaded
 
-**vLLM does not shed load, and it has no request timeout.**
+**vLLM 0.28.0 does not shed load, and it has no request timeout.** Checked in the engine source: no
+queue-depth limit, no queued-token limit, no request priority header. Re-check on an upgrade; a
+later engine that rejects with 503 above a queue depth changes this section.
 
 An arriving request is tokenised and put on a **waiting queue**. Each scheduler step admits waiting
 requests as three limits allow: `maxNumSeqs`, `maxNumBatchedTokens`, and free KV cache blocks. No

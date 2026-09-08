@@ -6,15 +6,28 @@
         --input-tokens 1000 --output-tokens 190 --seconds 120
     python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --concurrency 256 \
         --input-tokens 1000,4000,8000,8000,16000 --output-tokens 200,400,400,800     # a mixed workload
+    python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --stream --budget-seconds 8
+    python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --turns 6                # multi-turn
 
 One row per concurrency level: requests/sec, input and output tokens/sec, latency p50/p95/p99, and the
 decode speed a single request saw. Size a fleet on the aggregate numbers; check your latency budget on
 the percentiles. Both come from the same run, which is the point: peak throughput from one level and a
 passing p95 from a lower one overstated capacity by 21% once.
 
+--stream reads the answer as it is generated and adds time to first token (p50/p95). Decode speed is
+then measured from the first token to the last, not from the whole request. --budget-seconds adds
+goodput: the requests per second that finished inside the budget. A throughput number from a run that
+missed the budget is not capacity.
+
 Prompts are unique by default (a UUID up front defeats prefix caching) because that is the shape a fleet
-has to be sized for; --shared-prefix measures the cached case instead. Load is spread across processes,
-not threads: one Python process driving 768 connections measured a third of the true throughput.
+has to be sized for; --shared-prefix measures the cached case instead. --turns N runs conversations:
+each thread opens a session, sends its prompt, appends the answer and a follow-up, and sends the whole
+conversation again, N times. Every turn after the first is a prefix-cache hit if it lands on the engine
+that served the previous turn, so this shape measures the load balancer as much as the engine. Each
+session keeps its own cookies, so sticky sessions on the load balancer are honoured.
+
+Load is spread across processes, not threads: one Python process driving 768 connections measured a
+third of the true throughput.
 
 A comma-separated --input-tokens or --output-tokens is a mix: each request draws one size from the list,
 so a value listed twice is twice as likely. The dashboard's request-shape widgets show what arrived.
@@ -41,6 +54,7 @@ import requests
 
 FILLER = ("The customer placed an order containing several items and asked about delivery timing, "
           "refunds, and the status of a previous return. ")
+FOLLOW_UP = " Thanks. One more question about the same order: what happens if only part of it arrives?"
 
 
 def prompt(n_tokens: int, shared: bool) -> str:
@@ -50,8 +64,44 @@ def prompt(n_tokens: int, shared: bool) -> str:
     return (body if shared else f"Request {uuid.uuid4()}. {body}")[: n_tokens * 5]
 
 
+def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool) -> tuple[float, float, int, int, str]:
+    """One request. Returns (latency, time to first token, input tokens, output tokens, answer text).
+    Time to first token is 0 without streaming. Raises on anything but a well-formed answer."""
+    body = {"model": model, "input": text, "max_output_tokens": max_out, "temperature": 0.0}
+    t0 = time.perf_counter()
+    if not stream:
+        r = sess.post(f"{url}/v1/responses", json=body, timeout=300)
+        dt = time.perf_counter() - t0
+        if r.status_code != 200:
+            raise ValueError(f"status {r.status_code}")
+        # Parsed before anything is counted, so a malformed body raises before "ok" is counted.
+        u = r.json().get("usage") or {}
+        answer = "".join(c.get("text", "") for o in r.json().get("output") or [] for c in o.get("content") or [])
+        return dt, 0.0, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0), answer
+    body["stream"] = True
+    ttft, usage, parts = 0.0, {}, []
+    with sess.post(f"{url}/v1/responses", json=body, timeout=300, stream=True) as r:
+        if r.status_code != 200:
+            raise ValueError(f"status {r.status_code}")
+        for line in r.iter_lines():
+            if not line.startswith(b"data: "):
+                continue
+            ev = json.loads(line[6:])
+            if ev.get("type") == "response.output_text.delta":
+                if not ttft:
+                    ttft = time.perf_counter() - t0
+                parts.append(ev.get("delta", ""))
+            elif ev.get("type") == "response.completed":
+                usage = (ev.get("response") or {}).get("usage") or {}
+    dt = time.perf_counter() - t0
+    if not usage:
+        raise ValueError("stream ended without response.completed")
+    return dt, ttft, int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), "".join(parts)
+
+
 def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok: list[int],
-           seconds: float, shared: bool, q: mp.Queue) -> None:
+           seconds: float, shared: bool, q: mp.Queue, stream: bool = False, turns: int = 1,
+           budget: float = 0.0) -> None:
     import signal
     import threading
 
@@ -59,38 +109,48 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
 
     stop = threading.Event()
     lock = threading.Lock()
-    stats = {"ok": 0, "fail": 0, "in": 0, "out": 0, "lat": []}
-    sess = requests.Session()
-    sess.headers.update({"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    stats = {"ok": 0, "fail": 0, "in": 0, "out": 0, "lat": [], "ttft": [], "decode": [], "in_budget": 0}
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    def record(dt: float, ttft: float, used_in: int, used_out: int) -> None:
+        with lock:
+            stats["ok"] += 1
+            stats["in"] += used_in
+            stats["out"] += used_out
+            stats["lat"].append(dt)
+            stats["ttft"].append(ttft)
+            # Decode speed one request saw. With streaming, tokens after the first over the time after
+            # the first token; without, output tokens over the whole request, which folds prefill in.
+            if stream and used_out > 1 and dt > ttft:
+                stats["decode"].append((used_out - 1) / (dt - ttft))
+            elif dt > 0:
+                stats["decode"].append(used_out / dt)
+            if budget and dt <= budget:
+                stats["in_budget"] += 1
 
     def one() -> None:
         while not stop.is_set():
-            t0 = time.perf_counter()
-            try:
-                r = sess.post(f"{url}/v1/responses",
-                              json={"model": model, "input": prompt(random.choice(in_tok), shared),
-                                    "max_output_tokens": random.choice(out_tok), "temperature": 0.0},
-                              timeout=300)
-                dt = time.perf_counter() - t0
+            # A session per conversation: its own cookie jar, so a sticky load balancer keeps the
+            # conversation on one engine, and a fresh connection so it is balanced like a new client.
+            sess = requests.Session()
+            sess.headers.update(headers)
+            text = ""
+            for _ in range(turns):
                 if stop.is_set():
-                    continue          # finished after the window: drained, not counted
-                if r.status_code == 200:
-                    # Parsed before the lock, so a malformed body raises before "ok" is counted.
-                    u = r.json().get("usage") or {}
-                    used_in, used_out = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
-                    with lock:
-                        stats["ok"] += 1
-                        stats["in"] += used_in
-                        stats["out"] += used_out
-                        stats["lat"].append(dt)
-                else:
+                    break
+                try:
+                    text = text or prompt(random.choice(in_tok), shared)
+                    dt, ttft, used_in, used_out, answer = ask(sess, url, model, text, random.choice(out_tok), stream)
+                except (requests.RequestException, ValueError, AttributeError, TypeError, KeyError):
+                    # A body that is not the promised shape is a failure too. Left uncaught, it killed
+                    # the thread silently and the row reported a plausible number at lower concurrency.
                     with lock:
                         stats["fail"] += 1
-            # A body that is not the promised shape is a failure too. Left uncaught, it killed the
-            # thread silently and the row reported a plausible number at lower concurrency.
-            except (requests.RequestException, ValueError, AttributeError, TypeError):
-                with lock:
-                    stats["fail"] += 1
+                    break
+                if stop.is_set():
+                    break             # finished after the window: drained, not counted
+                record(dt, ttft, used_in, used_out)
+                text = f"{text} {answer}{FOLLOW_UP}"
 
     threads = [threading.Thread(target=one, daemon=True) for _ in range(conc)]
     t_start = time.perf_counter()
@@ -102,7 +162,8 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
     for t in threads:   # drain: every request opened inside the window finishes before we report
         t.join(timeout=330)
     with lock:
-        q.put({"wall": wall, **stats, "lat": list(stats["lat"])})
+        q.put({"wall": wall, **stats, "lat": list(stats["lat"]), "ttft": list(stats["ttft"]),
+               "decode": list(stats["decode"])})
 
 
 def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
@@ -110,7 +171,8 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
     per_proc = [total // procs_n + (1 if i < total % procs_n else 0) for i in range(procs_n)]
     q: mp.Queue = mp.Queue()
     procs = [mp.Process(target=worker, args=(a.url, a.key, model, n, a.input_tokens, a.output_tokens,
-                                             a.seconds, a.shared_prefix, q)) for n in per_proc if n]
+                                             a.seconds, a.shared_prefix, q, a.stream, a.turns,
+                                             a.budget_seconds)) for n in per_proc if n]
     for p in procs:
         p.start()
     # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level, the drain
@@ -133,14 +195,17 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
     ok = sum(r["ok"] for r in results)
     fail = sum(r["fail"] for r in results)
     lat = sorted(x for r in results for x in r["lat"])
-    pct = lambda p: lat[min(int(len(lat) * p), len(lat) - 1)] if lat else 0.0  # noqa: E731
-    out_tok = sum(r["out"] for r in results)
+    ttft = sorted(x for r in results for x in r["ttft"])
+    decode = [x for r in results for x in r["decode"]]
+    pct = lambda xs, p: xs[min(int(len(xs) * p), len(xs) - 1)] if xs else 0.0  # noqa: E731
     return {
         "concurrency": total, "rps": ok / wall, "input_tok_s": sum(r["in"] for r in results) / wall,
-        "output_tok_s": out_tok / wall, "p50": statistics.median(lat) if lat else 0.0,
-        "p95": pct(0.95), "p99": pct(0.99), "failed": fail,
-        # Decode speed one request saw: its output tokens over its own wall time, averaged.
-        "decode_tok_s_per_request": (out_tok / ok) / statistics.mean(lat) if ok and lat else 0.0,
+        "output_tok_s": sum(r["out"] for r in results) / wall,
+        "p50": statistics.median(lat) if lat else 0.0, "p95": pct(lat, 0.95), "p99": pct(lat, 0.99),
+        "ttft_p50": statistics.median(ttft) if ttft else 0.0, "ttft_p95": pct(ttft, 0.95),
+        "goodput_rps": sum(r["in_budget"] for r in results) / wall,
+        "failed": fail,
+        "decode_tok_s_per_request": statistics.mean(decode) if decode else 0.0,
     }
 
 
@@ -173,6 +238,12 @@ def main() -> int:
     ap.add_argument("--processes", type=int, default=8)
     ap.add_argument("--shared-prefix", action="store_true",
                     help="identical prompts, so the prefix cache hits; default is unique prompts")
+    ap.add_argument("--stream", action="store_true",
+                    help="stream answers and report time to first token; decode speed is then first-to-last token")
+    ap.add_argument("--turns", type=int, default=1,
+                    help="turns per conversation; each turn resends the conversation so far plus the answer")
+    ap.add_argument("--budget-seconds", type=float, default=0.0,
+                    help="latency budget; adds goodput, the requests/s that finished inside it")
     ap.add_argument("--json", action="store_true", help="also print one JSON line per level")
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
@@ -189,12 +260,14 @@ def main() -> int:
     levels = sizes("--concurrency", a.concurrency)
     a.input_tokens = sizes("--input-tokens", a.input_tokens)
     a.output_tokens = sizes("--output-tokens", a.output_tokens)
-    if a.processes < 1 or a.seconds <= 0 or a.warmup_seconds < 0:
-        sys.exit("--processes at least 1, --seconds above 0, --warmup-seconds at least 0")
+    if a.processes < 1 or a.seconds <= 0 or a.warmup_seconds < 0 or a.turns < 1 or a.budget_seconds < 0:
+        sys.exit("--processes and --turns at least 1, --seconds above 0, --warmup-seconds and --budget-seconds at least 0")
     model = served_model(a.url, a.key)
     shape = lambda v: str(v[0]) if len(v) == 1 else f"a mix of {','.join(map(str, v))}"  # noqa: E731
     print(f"model {model}\n{shape(a.input_tokens)} input / {shape(a.output_tokens)} output tokens, "
-          f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts, {a.seconds:g}s per level "
+          f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts"
+          f"{f', {a.turns}-turn conversations' if a.turns > 1 else ''}"
+          f"{', streamed' if a.stream else ''}, {a.seconds:g}s per level "
           f"after {a.warmup_seconds:g}s warm-up, {a.processes} client processes\n")
 
     # Warm-up: the first requests pay for CUDA graph capture and kernel autotuning. Measuring from the
@@ -204,14 +277,17 @@ def main() -> int:
     run_level(a, model, levels[0])
     a.seconds = saved
 
+    extra = (f" {'ttft p50':>9} {'ttft p95':>9}" if a.stream else "") + (f" {'goodput':>8}" if a.budget_seconds else "")
     print(f"{'conc':>6} {'req/s':>7} {'in tok/s':>9} {'out tok/s':>10} {'p50':>7} {'p95':>7} "
-          f"{'p99':>7} {'tok/s/req':>10} {'failed':>7}")
+          f"{'p99':>7} {'tok/s/req':>10} {'failed':>7}{extra}")
     prev = None
     for level in levels:
         r = run_level(a, model, level)
+        extra = ((f" {r['ttft_p50']:>8.2f}s {r['ttft_p95']:>8.2f}s" if a.stream else "")
+                 + (f" {r['goodput_rps']:>8.1f}" if a.budget_seconds else ""))
         print(f"{level:>6} {r['rps']:>7.1f} {r['input_tok_s']:>9,.0f} {r['output_tok_s']:>10,.0f} "
               f"{r['p50']:>6.2f}s {r['p95']:>6.2f}s {r['p99']:>6.2f}s "
-              f"{r['decode_tok_s_per_request']:>10.1f} {r['failed']:>7}")
+              f"{r['decode_tok_s_per_request']:>10.1f} {r['failed']:>7}{extra}")
         if a.json:
             print(json.dumps({k: round(v, 3) if isinstance(v, float) else v for k, v in r.items()}))
         if prev and r["input_tok_s"] < 0.85 * prev["input_tok_s"]:

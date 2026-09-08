@@ -118,3 +118,59 @@ def test_a_level_drains_its_in_flight_requests_and_counts_only_the_window(monkey
     assert r["ok"] == 3, "one request per thread completed inside the 0.5 s window"
     assert elapsed >= 0.8, "the second request of each thread was drained, not abandoned"
     assert r["wall"] < 0.6, "the reported wall is the window, not the drain"
+
+
+def test_turns_resend_the_growing_conversation_on_one_session(monkeypatch):
+    """--turns N: every turn after the first carries the previous prompt plus the answer, on the same
+    session (cookie jar), so a sticky load balancer can keep it on one engine."""
+    import multiprocessing as mp
+    bench = _load("benchmark")
+    seen = []
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"usage": {"input_tokens": 1, "output_tokens": 1},
+                                "output": [{"content": [{"text": "ANSWER"}]}]}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, url, json, timeout): seen.append((id(self), json["input"])); return Resp()
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    q = mp.Queue()
+    bench.worker("http://u", "k", "m", conc=1, in_tok=[50], out_tok=[5], seconds=0.05, shared=True, q=q, turns=3)
+    q.get(timeout=5)
+    first = seen[:3]
+    assert len({s for s, _ in first}) == 1, "one session per conversation"
+    assert first[1][1].startswith(first[0][1]) and "ANSWER" in first[1][1], "turn 2 = turn 1 + answer + follow-up"
+    assert first[2][1].startswith(first[1][1])
+
+
+def test_streaming_measures_time_to_first_token_and_reads_usage_from_the_completed_event(monkeypatch):
+    import multiprocessing as mp
+    import json as js
+    bench = _load("benchmark")
+
+    class Resp:
+        status_code = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def iter_lines(self):
+            yield b"event: response.output_text.delta"
+            yield b"data: " + js.dumps({"type": "response.output_text.delta", "delta": "hi"}).encode()
+            yield b""
+            yield b"data: " + js.dumps({"type": "response.completed",
+                                        "response": {"usage": {"input_tokens": 12, "output_tokens": 7}}}).encode()
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, url, json, timeout, stream): assert json["stream"] is True; return Resp()
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    q = mp.Queue()
+    bench.worker("http://u", "k", "m", conc=1, in_tok=[10], out_tok=[5], seconds=0.05, shared=True, q=q, stream=True)
+    r = q.get(timeout=5)
+    assert r["ok"] >= 1 and r["in"] == 12 * r["ok"] and r["out"] == 7 * r["ok"]
+    assert len(r["ttft"]) == r["ok"] and all(t > 0 for t in r["ttft"])
