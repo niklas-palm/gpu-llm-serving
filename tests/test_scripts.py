@@ -214,25 +214,25 @@ def test_size_fleet_rounds_up_and_prices_per_million_tokens():
     assert p8["instances"] == 1, "one eight-GPU instance holds 102 rps"
 
 
-def test_quality_summary_reads_harness_output_and_buckets_by_prompt_length(tmp_path, capsys):
+def test_quality_summary_merges_harness_results_and_compare_counts_flipped_answers(tmp_path, capsys):
     import json as js
     q = _load("quality")
-    d = tmp_path / "m" / "x"; d.mkdir(parents=True)
-    (d / "results_1.json").write_text(js.dumps({"results": {
-        "gsm8k": {"alias": "gsm8k", "exact_match,strict-match": 0.96, "exact_match_stderr,strict-match": 0.009,
-                  "exact_match,flexible-extract": 0.962, "exact_match_stderr,flexible-extract": 0.0086},
-        "ifeval": {"prompt_level_strict_acc,none": 0.8, "prompt_level_strict_acc_stderr,none": 0.02,
-                   "inst_level_strict_acc,none": 0.85, "inst_level_strict_acc_stderr,none": "N/A",
-                   "prompt_level_loose_acc,none": 0.83, "prompt_level_loose_acc_stderr,none": 0.02}}}))
-    rows = []
-    for i in range(16):
-        prompt = "q" * (100 + 50 * i)
-        rows.append({"filter": "strict-match", "exact_match": 1.0 if i < 12 else 0.0,
-                     "arguments": {"gen_args_0": {"arg_0": prompt, "arg_1": {}}}})
-        rows.append({"filter": "flexible-extract", "exact_match": 1.0, "arguments": {"gen_args_0": {"arg_0": prompt}}})
-    (d / "samples_gsm8k_1.jsonl").write_text("\n".join(js.dumps(r) for r in rows) + "\n")
-    q.summarise(str(tmp_path))
+    a = tmp_path / "a"; b = tmp_path / "b"
+    for root, gsm_scores in ((a, [1, 1, 1, 0]), (b, [1, 0, 1, 1])):
+        d = root / "loglik-arc_challenge" / "m"; d.mkdir(parents=True)
+        (d / "results_1.json").write_text(js.dumps({"results": {
+            "arc_challenge": {"acc_norm,none": 0.9, "acc_norm_stderr,none": 0.01, "acc,none": 0.88},
+            "wikitext": {"word_perplexity,none": 9.87, "word_perplexity_stderr,none": "N/A"}}}))
+        g = root / "gen-gsm8k" / "m"; g.mkdir(parents=True)
+        (g / "results_2.json").write_text(js.dumps({"results": {"gsm8k": {"exact_match,strict-match": sum(gsm_scores) / 4,
+                                                                          "exact_match_stderr,strict-match": 0.02}}}))
+        (g / "samples_gsm8k_x.jsonl").write_text("\n".join(
+            js.dumps({"doc_id": i, "filter": "strict-match", "exact_match": float(v)}) for i, v in enumerate(gsm_scores)) + "\n")
+    rows = q.summarise(str(a), "fp8", "m", str(tmp_path / "q.csv"))
     out = capsys.readouterr().out
-    assert "exact_match,strict-match" in out and " 96.0%" in out and "ifeval" in out
-    assert "by prompt length quartile (n=16)" in out
-    assert out.strip().endswith("0.0%"), "the longest quartile scored 0, the loss is on long prompts"
+    assert {r["task"] for r in rows} == {"arc_challenge", "wikitext", "gsm8k"}, "results from both passes are merged"
+    assert "9.87" in out and "90.0%" in out and "75.0%" in out
+    assert (tmp_path / "q.csv").read_text().count("\n") == 4, "header plus three rows"
+    q.compare(str(a), str(b))
+    out = capsys.readouterr().out
+    assert "gsm8k" in out and "50.0%" in out, "two of four shared questions flipped: one gained, one lost"
