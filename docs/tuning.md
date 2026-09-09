@@ -1665,6 +1665,12 @@ mixture of experts decodes like a dense model of its total size, amortised over 
 per-request speed falls from 174 to 41 while the aggregate rises 30×, and why the per-request column of
 a loaded benchmark can never be compared with ceiling 1.
 
+A dense model has no such transition. The dense 27B in fp8 on the same GPU and shape: 45 tokens/s per
+request at one in flight, 76% of its ceiling 1 (59 tokens/s for 27 GB of weights), with the memory
+controller 84% busy across the whole sweep. It is at the bandwidth wall from the first request and its
+aggregate tops out at 2,129 tokens/s at 128 in flight against the MoE's 4,971. Its prefill saturated at
+9,100 input tokens/s against 48,000: nine times the arithmetic per token, five times slower.
+
 **The direct measurement.** GPU utilisation as normally reported (SM active) reads 98 to 100% for every
 shape above and says nothing. The memory controller's busy fraction does:
 
@@ -1677,7 +1683,7 @@ nvidia-smi dmon -s um -d 2
 |---|---|---|
 | **75 to 80%**, and it stays there as load grows | decode-bound, at the practical bandwidth limit | a GPU with more bandwidth, fewer bytes (fp8 weights, fp8 cache), more engines |
 | **about 50%**, flat as load grows | prefill-bound: the tensor cores and kernels are the limit | a GPU with more compute, fewer prompt tokens (prefix cache), more engines |
-| **about 40%** at one request in flight | latency-bound: per-kernel and per-layer overhead | nothing in the config; more requests use the idle bandwidth |
+| **about 40%** at one request in flight (mixture of experts) | latency-bound: per-kernel and per-layer overhead | nothing in the config; more requests use the idle bandwidth. A dense model shows 75 to 85% here instead |
 | falling while SM active also falls | the scheduler is the limit: preemption, a full KV cache, or the client | fewer requests per engine, or the KV cache fixes in *troubleshooting.md* |
 
 The same engine, 4,000-token prompts and 8-token answers: 48,000 input tokens/s from 16 in flight
