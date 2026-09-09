@@ -779,6 +779,26 @@ Four things follow:
 
 ---
 
+## Structured output costs about 15% of decode speed
+
+Tool calls and agents ask for JSON that matches a schema; the engine compiles a grammar per request and
+masks every sampled token against it. Measured with `scripts/benchmark.py --schema` (a fixed object
+schema, strict) against plain generation on one g7e engine with the 30B fp8, 1,000-token prompts,
+streamed:
+
+| In flight | Plain: decode tok/s per request, TTFT p50 | Structured: decode tok/s per request, TTFT p50 |
+|---|---|---|
+| 8 | 90.4, 0.16 s | 80.8, 0.07 s |
+| 32 | 55.5, 0.34 s | 46.2, 0.10 s |
+| 64 | 42.6, 0.39 s | 35.2, 0.12 s |
+
+Decode per token is 11 to 17% slower under the grammar at every level, and e2e p95 was 14% higher at 64.
+Requests per second went the other way, because a closed schema ends the answer sooner; time to first
+token fell because the first token is the mandatory brace. Size a tool-calling fleet on tokens, not on
+requests, and budget about 15% of decode for the grammar.
+
+---
+
 ## Engine tuning
 
 ### `gpuMemoryUtilization: 0.95`: the biggest single effect for a model that fills the card
@@ -943,7 +963,8 @@ also fit more requests in the same VRAM.
 
 **Measured in three places, fp8 was neutral to positive in all but one.** On this GPU with the 30B, fp8
 won every shape including long cached prompts (17.1 against 12.3 req/s at 64 on 4,000-token shared
-prompts). On eight H100s with the same model, from 1k to 64k prompts: nothing separates them below 16k
+prompts), and the gap widened with context: at 16k and 32k prompts `auto` was 10 to 24% slower on every
+level, unique and cached, with half the token capacity in the same 58 GiB. On eight H100s with the same model, from 1k to 64k prompts: nothing separates them below 16k
 (±5%), fp8 wins 6 to 18% on unique prompts from 16k up because twice the tokens fit and the batch grows,
 and cached long prompts are a wash. The one exception was a 235B mixture-of-experts at TP=4 on H100s,
 where 4,000-token cached prompts ran 20 to 30% faster with `auto`, reproduced twice on that model and
@@ -1118,6 +1139,7 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 120B MoE (5B active), MXFP4, Marlin kernel (see note) | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
 | 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
 | 8B dense, fp8 (one engine, scaled ×8 from 17.0 req/s at 64 per engine) | ~136 | ~270 (cached, 128 per engine) | 155,000 | ~57 |
+| 80B hybrid MoE (3B active, linear attention on 3 of 4 layers), fp8, 4 × TP=2 on eight H100s | 34.0 at 256 | 36.0 | 76,000 | 22.1 |
 
 Which kernel ran matters as much as which weights. The startup log names it. On this GPU the 120B
 MXFP4 experts ran through the Marlin backend, which dequantises to bf16 for the matmul; in vLLM 0.28.0
@@ -1205,7 +1227,16 @@ the kernels of 0.28.0 and no other release.
     dollar basis: partly the seven times more active parameters, partly the lockstep. The rule that
     follows: the smallest tensor-parallel degree that fits, then replicas, and FP8 because it lowers
     that degree, not because the arithmetic is faster.
-14. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
+14. **Prefix-cache economics depend on the architecture.** An 80B mixture-of-experts with 3B active
+    parameters and linear (Gated-DeltaNet) attention on three layers in four gained only 2 to 6% from a
+    cached 1,000-token prefix, against the attention-based 30B's 46%: linear-attention layers carry a
+    recurrent state, not a KV cache, so only the attention layers reuse the prefix. At 4,000 tokens the
+    cached gain rose to 58 to 136% as attention's share of prefill grew. The same model decoded a single
+    stream at 184 to 220 tokens/s on two H100s, the fastest measured on any model, and delivered 43% of
+    the 30B's request rate on the same eight GPUs (half the engines at TP=2, the lockstep tax, and
+    younger kernels: 483 s to initialise). A new architecture has to be measured on its own shape of
+    traffic before the rules above are applied to it.
+15. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
     37 s in the first shape after every deploy on both GPU families (lazy kernel compilation and
     autotuning), then ran with p95 5 to 9 s. The benchmark script's `--warmup-seconds` covers the
     first requests; for such models run a throwaway minute first.
