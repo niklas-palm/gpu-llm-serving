@@ -19,8 +19,8 @@ served configuration: weights, KV cache precision, kernels and all. Two kinds of
 
 The standard suite is the set quantised checkpoints are usually published with: arc_challenge (25-shot),
 hellaswag (10-shot), mmlu (5-shot), truthfulqa_mc2, winogrande (5-shot), gsm8k (5-shot), wikitext
-perplexity, plus ifeval (instruction following), humaneval (code, executed) and gpqa_diamond (hard
-reasoning, chain of thought). Limits keep it to about 40 minutes on one engine; the interval at these
+perplexity, plus ifeval (instruction following), humaneval (code, executed) and MATH (competition
+mathematics, chain of thought; gpqa is gated on the Hub and left out). Limits keep it to about 40 minutes on one engine; the interval at these
 sizes is 1 to 2 points, enough to see a precision that answers worse, not enough to certify one that
 does not. Run the same command against two deployments and compare rows, or pass --compare to get the
 fraction of questions whose answer changed: a precision can keep the aggregate and still flip one
@@ -65,7 +65,12 @@ SUITES = {
         ("loglik", "wikitext", [], 60),
         ("loglik", "mmlu", ["--num_fewshot", "5"], 50),       # per subject: 57 x 50
         ("gen", "gsm8k", ["--num_fewshot", "5"], 500),
-        ("gen", "ifeval,humaneval_instruct,gpqa_diamond_cot_zeroshot", ["--confirm_run_unsafe_code"], 600),
+        ("gen", "ifeval,humaneval_instruct", ["--confirm_run_unsafe_code"], 600),
+        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),      # MATH, chain of thought, 4-shot
+    ],
+    "genfix": [   # the last two passes alone, to top up a run made before they existed
+        ("gen", "ifeval,humaneval_instruct", ["--confirm_run_unsafe_code"], 600),
+        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),
     ],
     "quick": [
         ("loglik", "arc_challenge,winogrande,wikitext", [], 200),
@@ -76,7 +81,7 @@ METRICS = {   # the one number to report per task, and the key of its per-sample
     "arc_challenge": "acc_norm,none", "hellaswag": "acc_norm,none", "winogrande": "acc,none",
     "truthfulqa_mc2": "acc,none", "mmlu": "acc,none", "wikitext": "word_perplexity,none",
     "gsm8k": "exact_match,strict-match", "ifeval": "prompt_level_strict_acc,none",
-    "humaneval_instruct": "pass@1,create_test", "gpqa_diamond_cot_zeroshot": "exact_match,flexible-extract",
+    "humaneval_instruct": "pass@1,create_test", "minerva_math": "exact_match,none",
 }
 SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_norm", "hellaswag": "acc_norm"}
 
