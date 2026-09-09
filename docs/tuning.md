@@ -1107,14 +1107,20 @@ draft length at a new batch size it stalled for about 30 s (p95 31 to 35 s at th
 anywhere. After a deploy with speculation on, sweep the concurrencies you intend to serve before taking
 traffic, or the warm-up in `scripts/benchmark.py` at one level is not enough.
 
-**A high acceptance rate is not a gain.** The 80B hybrid mixture-of-experts ships its own multi-token
-prediction head (`--speculative-config '{"method":"mtp","num_speculative_tokens":1}'`). On four TP=2
-engines across eight H100s the engine reported a mean acceptance length of 1.8, the draft right four
-times in five, and decode per request moved between −6% and +5%: the draft step plus a two-token verify
-across two GPUs cost about what the saved token was worth. Short-prompt throughput at high concurrency
-rose 9 to 21%, long unique prompts fell 15 to 20% and long cached prompts 21 to 31%. Not worth the flag on
-that model in 0.28.0. Judge speculation by the request rate and the per-request decode on your traffic,
-never by the acceptance rate the log prints.
+**A built-in draft head is the cheap kind of speculation, and topology decides whether it pays.** The
+80B hybrid mixture-of-experts ships its own multi-token prediction head
+(`--speculative-config '{"method":"mtp","num_speculative_tokens":1}'`): one extra token per step,
+verified in the same forward pass, no second model to load. The engine reported the draft right four
+times in five on both hosts, and the results differed by topology:
+
+| Deployment | Effect of the MTP head |
+|---|---|
+| One engine on this GPU (TP=1) | decode per request **+9 to +18%** at every level up to 64 in flight; unique-prompt request rate +3 to +24%; the head took 2.8 of 11.5 GiB of KV cache, so cached shapes that were pool-bound lost |
+| Four engines at TP=2 on eight H100s | decode per request −6% to +5%; long prompts −15 to −31%: the verify step across two GPUs cost about what the saved token was worth |
+
+So: turn on a shipped MTP head on a single-GPU engine, and measure it before trusting it on a
+tensor-parallel one. Judge any speculation by request rate and per-request decode on your traffic, never
+by the acceptance rate the log prints, which was the same in both rows.
 
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
 and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
@@ -1792,7 +1798,7 @@ Considered and left out, each with the condition that would bring it back:
 | Multi-instance GPU (four 24 GB slices per card) | A 30B fp8 model needs the whole card | a model under 20 GB with strict per-tenant isolation |
 | Pipeline parallelism, multi-node engines | Every model measured fits one instance | a model over 640 GB in fp8 |
 | Another engine (TensorRT-LLM, SGLang) | One engine, measured deeply, beats two measured shallowly for a sample | a kernel gap on a GPU generation this engine does not serve well |
-| Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above (*EAGLE-3*) | a publisher draft exists for your model: add the one line |
+| Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above, and a shipped MTP head +9 to +18% on one GPU (*EAGLE-3*) | a publisher draft or an MTP head exists for your model: add the one line |
 | Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
 | Suffix decoding (a better n-gram) | needs a package the engine image does not ship; n-gram itself measured −58% | agentic or code-editing traffic with heavy repetition, and an image rebuild |
 | Structured output and tool-call grammars in the benchmark | not measured; they add per-request grammar compilation | your traffic is mostly tool calls or JSON schemas |
