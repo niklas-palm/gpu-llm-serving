@@ -779,6 +779,30 @@ Four things follow:
 
 ---
 
+## Reasoning models: the effort setting is the capacity setting
+
+A reasoning model spends tokens thinking before it answers, and the request decides how many. Measured
+with the 120B mixture-of-experts on one engine, 1,000-token prompts, answers capped at 2,000 tokens,
+`scripts/benchmark.py --reasoning-effort`:
+
+| Effort | Output tokens per answer | Requests/s at 8 in flight | at 32 | p50 at 32 |
+|---|---|---|---|---|
+| low | 465 | 1.3 | 2.6 | 9.1 s |
+| medium (the default) | 803 | 0.7 | 1.6 | 18.8 s |
+| high | 1,607 (many hit the cap) | 0.3 | 0.8 | 36.0 s |
+
+The engine produced the same 580 tokens/s at 8 and 1,170 at 32 whatever the effort, and decode per
+request was the same 79 and 42 tokens/s. Effort changed only how many tokens an answer costs: 1.7×
+from low to medium, 2× from medium to high, 3.5× end to end, and latency with it. Time to first token
+did not move, because the first token is the first thought.
+
+Two consequences for a fleet: size it on output tokens per second, and set the effort per route, because a
+fleet sized for low-effort traffic serves a third of the requests when clients ask for high. A quality
+harness has to see the answer, too: with the cap below the model's chain of thought, answers never
+leave the reasoning channel and score as empty (*Does the cheaper precision answer worse?*).
+
+---
+
 ## Structured output costs about 15% of decode speed
 
 Tool calls and agents ask for JSON that matches a schema; the engine compiles a grammar per request and
