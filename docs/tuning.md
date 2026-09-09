@@ -365,28 +365,41 @@ point on the 30B, ±2 on the 27B.
 
 | Served configuration | gsm8k exact match (strict) | ifeval prompt-level strict | ifeval instruction-level strict |
 |---|---|---|---|
-| 30B MoE, publisher fp8, fp8 KV | 95.0% | 81.3% | 87.2% |
-| 30B MoE, publisher fp8, bf16 KV | 95.4% | 81.5% | 87.2% |
-| 30B MoE, bf16 weights | 95.8% | 80.2% | 86.2% |
+| 30B MoE Instruct-2507, publisher fp8, fp8 KV | 95.0% | 81.3% | 87.2% |
+| 30B MoE Instruct-2507, publisher fp8, bf16 KV | 95.4% | 81.5% | 87.2% |
+| 30B MoE Instruct-2507, bf16 weights | 95.8% | 80.2% | 86.2% |
+| 30B MoE (April release), bf16, thinking off | 90.8% | 83.2% | 88.7% |
+| 30B MoE (April release), NVIDIA NVFP4, thinking off | 91.2% | 83.6% | 88.9% |
+| 30B MoE (April release), NVIDIA NVFP4, thinking on, 1,024-token cap | 68.6% | 33.6% | 47.7% |
 | 27B dense, publisher fp8 | 72.4% | 30.9% | 44.5% |
 | 27B dense, bf16 | 70.2% | 32.2% | 45.4% |
 | 27B dense, community NVFP4 | 67.2% | 30.5% | 44.4% |
+| 32B dense, publisher fp8 | 89.6% | 31.4% | 45.5% |
 | 8B dense, publisher fp8 | 70.6% | 33.3% | 47.7% |
 
 What the rows say:
 
 - **fp8 weights cost nothing measurable** on either model or task, and neither does the fp8 KV cache
-  (30B: 95.0 against 95.4 and 81.3 against 81.5). The 2× throughput of fp8 comes for free on these tasks.
-- **The community NVFP4 build of the 27B costs 3 to 5 gsm8k points against bf16**, in two separate runs
-  (−1.4 and −3.0 against bf16; −5.2 against fp8), and nothing on ifeval. Small, but it is the one precision
-  effect that showed twice. Its +30% throughput over fp8 buys that.
-- **The 27B and 8B score low in absolute terms because they think before answering** and the cap cuts
-  long chains; ifeval formats fail wholesale under a cap. The comparison across precisions of the same
-  model is like for like; the comparison across models is not.
-- **Check the base model of a community quantisation before comparing it to anything.** The 30B NVFP4
-  build above is quantised from a different release; its scores are not a precision result.
-- gsm8k accuracy falls mildly with prompt length for every model (96.8 to 93.6% across quartiles for the
-  30B fp8); the script prints the quartiles so a precision that loses only on long prompts shows.
+  (30B: 95.0 against 95.4 and 81.3 against 81.5; 27B: 72.4 against 70.2). The 2× throughput of fp8 comes
+  for free on these tasks.
+- **Who quantised matters as much as the format.** NVIDIA's calibrated NVFP4 of the 30B is lossless
+  against its own bf16 base (+0.4 and +0.4) at twice the throughput. The community NVFP4 of the dense 27B
+  costs about 3 gsm8k points against bf16, in two separate runs, and nothing on ifeval. Score the
+  checkpoint you would deploy, not the format.
+- **Check the base model of a quantised checkpoint before comparing it to anything.** The 30B NVFP4
+  build above is quantised from the April release, not from Instruct-2507; the two differ by 4 points on
+  gsm8k in bf16 before any quantisation.
+- **A thinking model needs its own evaluation settings, and the settings dominate the score.** Every
+  thinking checkpoint (27B, 32B, 8B, the April 30B) scored 30 to 37% on ifeval under a 1,024-token cap
+  because the chain of thought ate the budget; the same NVFP4 30B went from 68.6 to 91.2% on gsm8k and
+  from 33.6 to 83.6% on ifeval with thinking disabled server-side
+  (`extraArgs: --default-chat-template-kwargs '{"enable_thinking": false}'`). Comparisons across
+  precisions of one model under one setting hold; absolute numbers across models do not unless the
+  setting matches how you will serve it. A reasoning model whose answer never leaves the reasoning
+  channel within the cap returns empty content, which the harness cannot score.
+- gsm8k accuracy by prompt-length quartile drifts by under 3 points for every instruct or thinking-off
+  run (96.8 to 93.6% for the 30B fp8), so no precision here loses only on long prompts; the script prints
+  the quartiles so yours would show.
 
 Two tasks and 500 items is a check, not a certification: run `scripts/quality.py` on your own prompts
 before switching, and compare deployments with each other, not with published numbers.
@@ -438,10 +451,12 @@ only on quality grounds.
 
 `nvidia/Qwen3-30B-A3B-NVFP4` with an fp8 KV cache, against load-time FP8 on the same eight
 `g7e.2xlarge`, unique 1,000-token prompts. **Read this as a kernel and format measurement, not a
-precision comparison:** the checkpoint's model card names `Qwen/Qwen3-30B-A3B`, the earlier hybrid
-thinking release, as its base, not the Instruct-2507 weights the fp8 rows use. Scored on gsm8k it
-answered 14 to 26 points lower and thought past the generation cap; that is a different model, not what
-4-bit costs. The like-for-like 4-bit comparison is the 27B below.
+precision comparison with the fp8 rows:** the checkpoint's model card names `Qwen/Qwen3-30B-A3B`, the
+earlier hybrid thinking release, as its base, not the Instruct-2507 weights the fp8 rows use. Against
+its own base it is lossless: scored with thinking disabled, 91.2% gsm8k and 83.6% ifeval against 90.8%
+and 83.2% for the bf16 base, at twice the throughput (*Does the cheaper precision answer worse?*). The
+community 4-bit build of the 27B below lost 3 points on the same task, so who quantised matters as much
+as the format.
 
 | Concurrency | FP8 input tok/s | NVFP4 | Gain | p95 FP8 | p95 NVFP4 |
 |---|---|---|---|---|---|
