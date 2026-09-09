@@ -1115,11 +1115,13 @@ times in five on both hosts, and the results differed by topology:
 
 | Deployment | Effect of the MTP head |
 |---|---|
-| One engine on this GPU (TP=1) | decode per request **+9 to +18%** at every level up to 64 in flight; unique-prompt request rate +3 to +24%; the head took 2.8 of 11.5 GiB of KV cache, so cached shapes that were pool-bound lost |
+| One engine on this GPU (TP=1), one draft token | decode per request **+9 to +18%** at every level up to 64 in flight; unique-prompt request rate +3 to +24%; the head took 2.8 of 11.5 GiB of KV cache, so cached shapes that were pool-bound lost |
+| Same, two draft tokens | **+9 to +41%** on every unique shape, better than one token at every level including 64 in flight; one request in flight +30% |
 | Four engines at TP=2 on eight H100s | decode per request −6% to +5%; long prompts −15 to −31%: the verify step across two GPUs cost about what the saved token was worth |
 
-So: turn on a shipped MTP head on a single-GPU engine, and measure it before trusting it on a
-tensor-parallel one. Judge any speculation by request rate and per-request decode on your traffic, never
+So: turn on a shipped MTP head on a single-GPU engine, try two draft tokens, and measure it before
+trusting it on a tensor-parallel one. The "speculation loses at load" rule of the EAGLE-3 draft did
+not apply here: a 3B-active model leaves compute to spare for verification. Judge any speculation by request rate and per-request decode on your traffic, never
 by the acceptance rate the log prints, which was the same in both rows.
 
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
