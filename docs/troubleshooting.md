@@ -530,6 +530,28 @@ aws logs tail "$LOG_GROUP" --since 1h --region "$REGION" | grep -iE "kv.cache|gp
 
 ---
 
+## Symptom: the engine dies when an evaluation asks for prompt logprobs
+
+`scripts/quality.py`, or any client sending `/v1/completions` with `echo` and `logprobs`, kills a healthy
+engine within seconds; the load balancer answers `502 Bad Gateway` until ECS has restarted the task.
+The log:
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.97 GiB. GPU 0 has a total capacity
+of 94.97 GiB of which 2.42 GiB is free.
+```
+
+**Cause:** prompt logprobs make the engine keep the full vocabulary of logits for every token of the
+prefill chunk (151,936 × up to 8,192 tokens in fp32, plus the copies sorting makes), outside the KV
+cache budget. The serving default of `gpuMemoryUtilization: 0.95` leaves no room; 0.85 did not either.
+
+**Fix:** for the evaluation, deploy with `gpuMemoryUtilization: 0.80` and `maxNumBatchedTokens: 2048`
+(the buffer scales with the prefill chunk), and keep the log-likelihood requests at a few in flight.
+Measured to hold at 4 in flight with 10-shot prompts. Neither setting changes what is scored; put the
+serving values back afterwards.
+
+---
+
 ## Symptom: an engine dies during the weight download with `429 Too Many Requests`
 
 The engine log ends in a traceback from the Hugging Face client: `HTTP status client error (429 Too
