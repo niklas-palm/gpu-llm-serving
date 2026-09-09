@@ -963,6 +963,32 @@ engine, +47% at 16, +8% at 32 with a heavy tail (p95 23 s), −27% at 64; with t
 at 64 and no tail. Verification needs compute, and prefill of unique prompts at high concurrency takes it
 (*Choosing a model to host*, point 9).
 
+**The loss at load is avoidable: make the draft length follow the batch size.** vLLM 0.28.0 accepts a
+schedule in the same flag, `num_speculative_tokens_per_batch_size`, a list of `[from, to, K]` ranges over
+the number of running requests. Measured on one engine with the 120B model and its draft, unique
+1,000-token prompts, against the same engine without speculation:
+
+```yaml
+extraArgs: --speculative-config '{"method":"eagle3","model":"nvidia/gpt-oss-120b-Eagle3-v3","num_speculative_tokens":3,"num_speculative_tokens_per_batch_size":[[1,16,3],[17,32,1],[33,4096,0]]}'
+```
+
+| Per engine in flight | K by schedule | Reference shape | Long answers | Mixed shape | All prompts cached |
+|---|---|---|---|---|---|
+| 8 | 3 | **+23%** | **+41%** | **+25%** | +9% |
+| 16 | 3 | **+27%** | **+54%** | **+37%** | **+27%** |
+| 32 | 1 | **+17%** | **+38%** | **+22%** | **+22%** |
+| 64 | 0 | −6% | 0% | −3% | +7% |
+
+The static K=3 measured −27% at 64 on the same shape. With the schedule the low-load gain stays and the
+high-load loss becomes noise, so one configuration holds across the day. At one request in flight the
+draft gave 199 against 168 tokens per second.
+
+**Warm every batch regime before you trust the first minute.** The first time the engine ran a new
+draft length at a new batch size it stalled for about 30 s (p95 31 to 35 s at those levels, a clean 2 to
+8 s at every level once seen). The identical sweep run a second time in reverse order showed no stall
+anywhere. After a deploy with speculation on, sweep the concurrencies you intend to serve before taking
+traffic, or the warm-up in `scripts/benchmark.py` at one level is not enough.
+
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
 and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
 
@@ -1592,7 +1618,7 @@ Considered and left out, each with the condition that would bring it back:
 | Multi-instance GPU (four 24 GB slices per card) | A 30B fp8 model needs the whole card | a model under 20 GB with strict per-tenant isolation |
 | Pipeline parallelism, multi-node engines | Every model measured fits one instance | a model over 640 GB in fp8 |
 | Another engine (TensorRT-LLM, SGLang) | One engine, measured deeply, beats two measured shallowly for a sample | a kernel gap on a GPU generation this engine does not serve well |
-| Speculative decoding on by default | +47% at low load, −27% at the operating point (*EAGLE-3*) | your fleet runs at 16 or fewer per engine, or the batch-size schedule below holds up |
+| Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above (*EAGLE-3*) | a publisher draft exists for your model: add the one line |
 | Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
 | Suffix decoding (a better n-gram) | needs a package the engine image does not ship; n-gram itself measured −58% | agentic or code-editing traffic with heavy repetition, and an image rebuild |
 | Structured output and tool-call grammars in the benchmark | not measured; they add per-request grammar compilation | your traffic is mostly tool calls or JSON schemas |
