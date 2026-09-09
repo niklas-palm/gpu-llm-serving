@@ -19,7 +19,7 @@ def _load(name: str):
 def test_every_script_runs_help():
     """--help runs the module body and the argparse setup; neither needs credentials."""
     import subprocess
-    for name in ("build_image", "endpoint_info", "test_endpoint", "benchmark"):
+    for name in ("build_image", "endpoint_info", "test_endpoint", "benchmark", "size_fleet", "quality"):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, f"{name}.py"), "--help"],
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
@@ -199,3 +199,40 @@ def test_schema_and_reasoning_effort_land_in_the_request_body(monkeypatch):
     body = seen[0]
     assert body["text"]["format"]["type"] == "json_schema" and body["text"]["format"]["schema"] == bench.SCHEMA
     assert body["reasoning"] == {"effort": "low"}
+
+
+def test_size_fleet_rounds_up_and_prices_per_million_tokens():
+    sf = _load("size_fleet")
+    p = sf.plan(engine_rps=12.8, demand_rps=70, price_per_hour=5.85, gpus_per_instance=1,
+                input_tokens=1000, output_tokens=190, headroom=0.15)
+    assert p["instances"] == 7, "70 / (12.8 * 0.85) = 6.4 -> 7"
+    assert p["fleet_price_per_hour"] == 7 * 5.85
+    # demand 70 rps * 1190 tokens * 3600 s = 299.9M tokens/h at $40.95/h
+    assert abs(p["price_per_million_tokens_at_demand"] - 40.95 / 299.88) < 1e-3
+    assert p["utilisation_at_demand"] < 0.85
+    p8 = sf.plan(12.8, 70, 33.14, 8, 1000, 190, 0.15)
+    assert p8["instances"] == 1, "one eight-GPU instance holds 102 rps"
+
+
+def test_quality_summary_reads_harness_output_and_buckets_by_prompt_length(tmp_path, capsys):
+    import json as js
+    q = _load("quality")
+    d = tmp_path / "m" / "x"; d.mkdir(parents=True)
+    (d / "results_1.json").write_text(js.dumps({"results": {
+        "gsm8k": {"alias": "gsm8k", "exact_match,strict-match": 0.96, "exact_match_stderr,strict-match": 0.009,
+                  "exact_match,flexible-extract": 0.962, "exact_match_stderr,flexible-extract": 0.0086},
+        "ifeval": {"prompt_level_strict_acc,none": 0.8, "prompt_level_strict_acc_stderr,none": 0.02,
+                   "inst_level_strict_acc,none": 0.85, "inst_level_strict_acc_stderr,none": "N/A",
+                   "prompt_level_loose_acc,none": 0.83, "prompt_level_loose_acc_stderr,none": 0.02}}}))
+    rows = []
+    for i in range(16):
+        prompt = "q" * (100 + 50 * i)
+        rows.append({"filter": "strict-match", "exact_match": 1.0 if i < 12 else 0.0,
+                     "arguments": {"gen_args_0": {"arg_0": prompt, "arg_1": {}}}})
+        rows.append({"filter": "flexible-extract", "exact_match": 1.0, "arguments": {"gen_args_0": {"arg_0": prompt}}})
+    (d / "samples_gsm8k_1.jsonl").write_text("\n".join(js.dumps(r) for r in rows) + "\n")
+    q.summarise(str(tmp_path))
+    out = capsys.readouterr().out
+    assert "exact_match,strict-match" in out and " 96.0%" in out and "ifeval" in out
+    assert "by prompt length quartile (n=16)" in out
+    assert out.strip().endswith("0.0%"), "the longest quartile scored 0, the loss is on long prompts"
