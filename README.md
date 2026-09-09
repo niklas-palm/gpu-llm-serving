@@ -185,7 +185,7 @@ Smaller weights of the same model run faster and need fewer instances; measured 
 |---|---|---|---|
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | `"fp8"` | 14,900 | shipped default |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` | `""` | same | publisher's fp8; half the download |
-| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit; output quality not measured |
+| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit; a sibling 4-bit build scored within noise of bf16 on gsm8k, this one is unscored |
 | any of the above + EAGLE-3 speculator in `extraArgs` | | +24% to +41% | one line; see [docs/tuning.md](docs/tuning.md) |
 
 bf16 with no quantisation measured 55 to 63% of fp8's throughput. Details, and the caveats, in *Quantisation is two
@@ -709,14 +709,15 @@ Two caveats: **p99 leaves the budget long before p95** (13.10 s at 1024 concurre
 `g7e.2xlarge`, unique 1,000-token prompts, 768 concurrent): an EAGLE-3 speculator, one line in
 `extraArgs`, raised throughput 24% and cut p95 from 6.33 s to 5.62 s; the NVFP4 checkpoint of the same
 model raised it 28% and cut p95 to 5.06 s. Neither is the default: the speculator is tied to the model,
-and NVFP4's output quality is unmeasured. *Speculative decoding* and *NVFP4* in
-[docs/tuning.md](docs/tuning.md).
+and NVFP4 is one gsm8k check away from a recommendation, not a certification. *Speculative decoding*
+and *NVFP4* in [docs/tuning.md](docs/tuning.md).
 
-**Not measured**, so treat as estimates: tensor parallelism above 2 (four- and eight-GPU instances were
-not obtainable); autoscaling timings on fleets other than 6 → 8; output quality of any quantisation
-(every figure here is throughput); prompts longer than 4,000 tokens, and mixing long and short requests
-on one engine; any model other than `Qwen/Qwen3-30B-A3B-Instruct-2507`, on which all of the above was
-run.
+**Measured since, on other hardware and models** (all in [docs/tuning.md](docs/tuning.md)): tensor,
+expert and data parallelism up to eight GPUs on H100s with a 235B model; five other checkpoints and three
+model families; output quality of fp8 and NVFP4 against bf16 on one standard task; multi-turn traffic
+against round-robin and sticky routing; an 8,000-token prompt mixed with short ones. **Not measured:**
+autoscaling timings on fleets other than 6 → 8; prompts beyond 8,000 tokens; quality on anything but
+gsm8k.
 
 ---
 

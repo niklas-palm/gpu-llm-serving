@@ -138,7 +138,7 @@ outputTokenBands: [100, 200, 500, 1000, 2000]
 #
 #   Qwen/Qwen3-30B-A3B-Instruct-2507      bf16, 57 GiB, + quantization: "fp8" below     shipped default
 #   Qwen/Qwen3-30B-A3B-Instruct-2507-FP8  publisher's fp8, 29 GiB, quantization: ""      same speed, half the download
-#   nvidia/Qwen3-30B-A3B-NVFP4            calibrated 4-bit, 17 GiB, quantization: ""     +25-28% tok/s, quality unmeasured
+#   nvidia/Qwen3-30B-A3B-NVFP4            calibrated 4-bit, 17 GiB, quantization: ""     +25-28% tok/s, quality unscored
 #   + EAGLE-3 speculator via extraArgs (see below)                                        +24-41% tok/s on any of them
 #
 # bf16 without quantization measured 55 to 63% of fp8's throughput and is the choice only on quality grounds.
@@ -166,7 +166,7 @@ estimatedParamsBillions: 30
 # exists. If you clear this for bf16 weights, set kvCacheDtype: auto below.
 # NVFP4 measured another +25% over fp8 on this GPU but needs a calibrated checkpoint (set modelId to the
 # publisher's NVFP4 build and clear this): vLLM's load-time "nvfp4_per_token" refuses this GPU (it wants
-# SM100, the B200). Output quality is unmeasured, so fp8 stays the default.
+# SM100, the B200). A 27B NVFP4 build scored within noise of bf16 on gsm8k; one task, so fp8 stays the default.
 # docs/tuning.md, "Quantisation is two independent decisions" and "NVFP4".
 quantization: "fp8"
 

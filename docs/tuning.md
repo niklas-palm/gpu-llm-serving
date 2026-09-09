@@ -344,6 +344,26 @@ They interact in one direction:
 | quantised (FP8/4-bit) | **`fp8`** | +12% decode, and small weights leave ample headroom |
 | unquantised (bf16) | **`auto`** | fp8 raises memory pressure here rather than lowering it; see `gpuMemoryUtilization` |
 
+#### Does the cheaper precision answer worse? One check, on a standard task
+
+Throughput says nothing about answers, so each precision was scored through the endpoint with the same
+harness (lm-eval, gsm8k, 5-shot, greedy, 500 questions, chat template on, 768-token generation cap):
+
+| Weights | gsm8k exact match, strict | flexible |
+|---|---|---|
+| 30B MoE, publisher fp8 | **96.0%** | 96.2% |
+| 30B MoE, bf16 | 95.6% | 96.0% |
+| 27B dense, publisher fp8 | **72.2%** | 70.2% |
+| 27B dense, bf16 | 71.8% | 68.0% |
+| 27B dense, community NVFP4 | 70.4% | 66.2% |
+
+The interval at 500 questions is about ±2 points on the 27B and ±1 on the 30B, so fp8 is
+indistinguishable from bf16 on both models and NVFP4 is within the interval of bf16. The 27B scores low
+in absolute terms because it reasons before answering and the generation cap cuts long chains; the
+comparison across its precisions is like for like. One task and 500 items is a check, not a
+certification: run your own prompts before switching, and score by prompt-length bucket, since a small
+aggregate drop can hide a consistent loss on one kind of input.
+
 #### Every weight option, measured
 
 Every row **meets** the latency budget, at the highest concurrency where it does. Plan against the
@@ -400,8 +420,9 @@ only on quality grounds.
 
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
-another ~15 GiB. Output quality was not measured, the same caveat as AWQ below, so FP8 stays
-the default. To use it, set `modelId` to the NVFP4 checkpoint and clear `quantization`.
+another ~15 GiB. On gsm8k the 27B NVFP4 build scored within the sampling interval of its bf16 original
+(*Does the cheaper precision answer worse?*); that is one task, so FP8 stays the default. To use it, set
+`modelId` to the NVFP4 checkpoint and clear `quantization`.
 
 **Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
 quantises bf16 weights at load time the way `fp8` does. On g7e the engine refuses to start:
@@ -1038,8 +1059,9 @@ the kernels of 0.28.0 and no other release.
 2. **Precision second, and it is worth more than any knob.** fp8 over bf16 was +58% to +83% on both
    models, most on long prompts. A 4-bit format added +26% on short prompts and +57% on long ones over
    fp8. Weight precision is the only setting in this repository with a 2× effect; every engine knob is
-   under 30%. None of these measurements say anything about output quality; that is a separate
-   evaluation you owe your users before switching.
+   under 30%. Throughput says nothing about answers: on one standard task fp8 scored the same as bf16
+   on both models and NVFP4 within the interval (*Does the cheaper precision answer worse?*); that is a
+   check, and your own prompts are the evaluation you owe your users before switching.
 3. **Know which wall you are at before you buy anything** (*Which wall are you at?*). The prefix cache
    was worth 2.7× on long prompts and nothing on the dense model's short prompts. A GPU with more
    bandwidth helps a decode-bound workload and does nothing for a prefill-bound one. The same fleet
