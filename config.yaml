@@ -221,8 +221,9 @@ tuning:
 
   # KV cache precision, independent of weight precision. "fp8" measured +12% decode, growing with
   # concurrency. "auto" keeps the model's precision.
-  # Not a win on every shape: on H100s, long prompts with a shared prefix ran 20 to 30% faster with
-  # "auto" (attention over cached tokens is that shape's cost). docs/tuning.md, "kvCacheDtype".
+  # On this GPU (FlashInfer attention) fp8 won every shape, long cached prompts included (+18 to 39%).
+  # On H100s (FlashAttention) the same shape ran 20 to 30% faster with "auto". Kernel-dependent, so
+  # measure it on yours. docs/tuning.md, "kvCacheDtype".
   # With unquantised weights use "auto": fp8 packs more tokens in, batches grow, and it runs out of
   # VRAM under load. `cdk synth` warns on the combination.
   kvCacheDtype: fp8

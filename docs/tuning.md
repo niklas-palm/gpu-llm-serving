@@ -840,20 +840,33 @@ At high concurrency the KV cache is roughly half of all decode memory traffic, a
 almost none, so halving it is worth close to 10% with a full batch and nothing alone. Smaller entries
 also fit more requests in the same VRAM.
 
-**It is not a free win on every shape.** On H100s with a 235B mixture-of-experts at TP=4, fp8 gave the
-expected +5 to +12% on unique decode-heavy traffic (22.5 against 21.0 rps on the reference shape at 512;
-18.4 against 16.3 on 800-token answers), but **4,000-token prompts with a shared prefix ran 20 to 30%
-faster with `auto`** (81.7 against 67.3 rps at 512; 60.7 against 46.2 at 256, reproduced in a second fp8
-run at 63.4). That shape spends its time in attention over cached tokens, and the bf16 attention path was
-faster per token than the fp8-cache path in this engine version. At one request in flight the same
-pattern showed as 105 against 93 tokens per second.
+**Which one wins on long cached prompts depends on the attention kernel, so measure it on your GPU.**
+Two measurements, opposite signs:
 
-fp8 wins when the KV pool is the limit (more tokens fit, larger batches); bf16 wins when attention over
-long cached contexts is the limit. Which one you have is in the dashboard: high KV cache usage and
-preemptions point at fp8, a high prefix-cache hit rate with long prompts points at `auto`.
+| GPU, attention backend | Unique prompts | 4,000-token prompts with a shared prefix |
+|---|---|---|
+| This GPU, FlashInfer, 30B MoE, one engine | fp8 **+4 to +10%** (ref), +7 to +27% (long) | fp8 **+18 to +39%** (17.1 against 12.3 req/s at 64) |
+| H100, FlashAttention, 235B MoE at TP=4 | fp8 +5 to +12% | **`auto` +20 to +30%** (81.7 against 67.3 req/s at 512, reproduced) |
+
+On this GPU the FlashInfer path reads the fp8 cache natively and gains from half the bytes on every
+shape, down to one request in flight (170 against 155 tokens per second). On the H100 the FlashAttention
+path paid a dequantise cost per cached token that outweighed the bytes saved once the prompt was long
+and mostly cached. Same engine version, same flag, different kernel. The startup log names the backend
+(*troubleshooting.md*, "Which kernels did the engine pick?").
 
 **On by default here.** It is a lossy store for cached attention state; to rule that out, set
 `kvCacheDtype: auto`.
+
+### CUDA graph mode: leave the engine default
+
+vLLM 0.28.0 captures full CUDA graphs for decode-only batches and piecewise graphs for batches that mix
+prefill and decode (`FULL_AND_PIECEWISE`). `FULL_DECODE_ONLY`, set with
+`extraArgs: -cc.cudagraph_mode=FULL_DECODE_ONLY`, skips the piecewise graphs to give their memory back
+to the KV cache. Measured on one engine with the 30B fp8 mixture-of-experts: graph capture fell from 9 s
+and 0.62 GiB to 4 s and 0.21 GiB, and the KV cache grew from 57.99 to 58.29 GiB, half a percent. Every
+unique-prompt shape at 8 to 64 in flight was within 3%; the cached reference shape ran 10 to 33% faster
+in a single run, which is unexplained and unrepeated. The memory argument does not exist on a 96 GiB
+card; there is nothing here to change until the cached result is reproduced.
 
 ### `enableExpertParallel: false`: measure it, do not assume
 
