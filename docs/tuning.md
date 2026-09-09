@@ -1376,10 +1376,18 @@ scale with weight size and fleet shape.
 | Transition | Elapsed | Waiting on |
 |---|---|---|
 | load starts -> tasks 6 -> 8 | **~6 min** | load balancer metric publication, then a 3-datapoint alarm |
-| -> new tasks healthy | **+~5 min** | pulling and loading weights |
+| -> new tasks healthy | **+~5 min** | instance boot, image pull (2 min), weights download, engine start |
 | load stops -> tasks 8 -> 7 | **~17 min** | the 15-datapoint low alarm |
 | -> instance terminated | **+~15 min** | the capacity provider's own scale-in evaluation |
 | full 8 -> 6 convergence | **~45–60 min** | one step per cooldown |
+
+Where the engine's own start goes, measured on one restart of the 30B fp8 model with the weights already
+on the host: model loading 81 s, torch compilation 28 s, profiling and graph capture 40 s, about 3 min
+from container start to serving. With the engine's cache directory on the host volume (what the
+entrypoint does) the second start loaded in 14 s, compiled in 0.1 s and served after 50 s. That removes
+two thirds of the engine start from every restart and redeploy on an existing instance. A new instance
+still pays its boot, the image pull and the first weights download, so the scale-out figure above moves
+by about a minute, not five.
 
 Consequences:
 
