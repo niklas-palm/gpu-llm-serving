@@ -2,7 +2,7 @@
 """Score the served model on standard benchmarks through the endpoint, so a cheaper precision can be
 checked for what it costs in answers, not only what it saves in GPUs.
 
-    pip install "lm-eval[api]==0.4.13" transformers langdetect immutabledict nltk
+    pip install "lm-eval[api,math]==0.4.13" transformers langdetect immutabledict nltk
     python3 scripts/quality.py https://<endpoint> --key "$API_KEY"                      # the standard suite
     python3 scripts/quality.py https://<endpoint> --key "$API_KEY" --suite quick         # 10 minutes
     python3 scripts/quality.py https://<endpoint> --key "$API_KEY" --csv results.csv --tag fp8
