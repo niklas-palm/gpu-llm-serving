@@ -1180,6 +1180,7 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 120B MoE (5B active), MXFP4, Marlin kernel (see note) | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
 | 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
 | 8B dense, fp8 (one engine, scaled ×8 from 17.0 req/s at 64 per engine) | ~136 | ~270 (cached, 128 per engine) | 155,000 | ~57 |
+| 32B dense, fp8 (one engine, scaled ×8 from 4.3 req/s at 64 per engine) | ~34 | ~86 | ~32,000 (saturated at 4k prompts) | ~10 |
 | 80B hybrid MoE (3B active, linear attention on 3 of 4 layers), fp8, 4 × TP=2 on eight H100s | 34.0 at 256 | 36.0 | 76,000 | 22.1 |
 | 80B hybrid MoE, fp8, one engine on this GPU (scaled ×8 from 7.5 req/s at 64 per engine) | ~60 | ~89 | ~140,000 | ~34 |
 
@@ -1259,7 +1260,10 @@ the kernels of 0.28.0 and no other release.
     (19,400 against 22,400 input tok/s): eight billion parameters of arithmetic per prompt token against
     three billion active. Short prompts favour the small dense model; long prompts favour the mixture
     of experts. Its batch-1 decode ran at 72% of its bandwidth ceiling, dense behaviour, against the
-    MoE's 33%.
+    MoE's 33%. Above the model that fits, a dense 32B in fp8 on the same GPU did a third of the MoE's
+    request rate at every load (4.3 against 12.8 req/s at 64) and an eleventh of its prefill (4,000 against
+    48,000 input tok/s), at 82% of its own batch-1 ceiling from the first request: every dense model measured
+    (8B, 27B, 32B) sits at the bandwidth wall alone, and the mixture of experts is the one that batches.
 13. **A model that needs several GPUs pays a third tax, and the topology decides how much.** Beyond
     compute and bandwidth there is the cost of keeping N GPUs in lockstep: an all-reduce per layer,
     expert dispatch, every kernel launched N times. A 235B mixture-of-experts (22B active) on eight
