@@ -1778,6 +1778,7 @@ between sections are stated where they matter; the campaigns behind them:
 | Every weight option, model families, EAGLE-3 on the 120B | 8 × `g7e.2xlarge` | 30B MoE, 27B dense (bf16, fp8, NVFP4), 120B MXFP4 (Marlin kernel), 120B NVFP4 hybrid | same matrix, 64 to 512 per fleet |
 | H100 comparison, multi-GPU topologies (TP, EP, DP) | one `p5.48xlarge` (8 × H100) | the same, plus a 235B MoE in fp8 and bf16 | same matrix, 64 to 512 per host |
 | Routing and the prefix cache, decode ceilings and the memory-controller measurement, KV precision by kernel, CUDA graph mode, warm restart, dynamic speculation, dense contrast, quality | 1 and 8 × `g7e.2xlarge` | 30B MoE fp8, 27B dense, 120B MXFP4 | streamed, 1 to 128 per engine, 60 to 120 s per level |
+| Repeatability across regions and days, long prompts to 64k, KV precision by context length, structured output, the 8B and 32B dense points, the 80B hybrid MoE on one GPU and at TP=2 with its MTP head, quality on two tasks for eleven configurations | one `g7e.2xlarge` in three regions, one `p5.48xlarge` | 30B MoE, 8B, 27B, 32B dense, 80B hybrid MoE, 120B MXFP4 | streamed, 90 s levels, 1 to 256 in flight; lm-eval gsm8k 500 and ifeval 541 |
 
 Run-to-run noise, measured by repeating configurations: an eight-engine H100 host reproduced every row
 within ±2% back to back and across two days and two regions; a single g7e engine within ±3 to 4%
