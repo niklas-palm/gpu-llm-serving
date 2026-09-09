@@ -31,9 +31,13 @@ settings (see docs/tuning.md), or the chain of thought eats the cap and every ge
 collapses. And the log-likelihood requests ask the engine for the probability of every prompt token,
 which materialises the whole vocabulary for every position of a 2,000-token few-shot prompt: several
 GiB per request. At the serving default of 0.95 memory utilisation the engine had 2.4 GiB free and died
-with a CUDA out-of-memory on the first batch. Deploy the configuration you are scoring with
-`gpuMemoryUtilization: 0.85` for the duration of the evaluation; --loglik-concurrency stays low. Do not compare with published
-numbers, which use other prompts and settings; compare deployments with each other.
+with a CUDA out-of-memory on the first batch, and 0.85 was not enough either: the logits buffer scales
+with the prefill chunk, not the request. Deploy the configuration you are scoring with
+`gpuMemoryUtilization: 0.80` and `maxNumBatchedTokens: 2048` for the duration of the evaluation
+(measured to hold at 4 in flight with 10-shot prompts); neither changes what is scored.
+
+Do not compare with published numbers, which use other prompts and settings; compare deployments with
+each other.
 """
 
 from __future__ import annotations
