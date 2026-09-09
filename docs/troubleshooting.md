@@ -680,6 +680,32 @@ See *Spot and instance protection* in [README.md](../README.md) for when suspend
 
 ---
 
+## Which kernels did the engine pick?
+
+Two deployments of the same weights on two GPUs, or two formats on one GPU, are not comparable until
+you know which kernels ran. The engine names them at startup:
+
+```bash
+aws logs tail "$LOG_GROUP" --since 30m --region "$REGION" \
+  | grep -E "attention backend|MoE backend|Marlin|native support|cudagraph|Available KV cache memory"
+```
+
+What to expect, and what it means:
+
+| Line | Meaning |
+|---|---|
+| `Using FLASHINFER attention backend` or `Using FLASH_ATTN attention backend` | which attention kernels; they differ in fp8-cache handling |
+| `Using DEEPGEMM Fp8 MoE backend` (this GPU) or `Using TRITON Fp8 MoE backend` (H100) | native fp8 expert kernels |
+| `Using 'MARLIN' Mxfp4 MoE backend` | 4-bit weights dequantised to bf16 for the matmul: weight-only, not native 4-bit compute. The only MXFP4 path vLLM 0.28.0 has for this GPU generation |
+| `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM` | native 4-bit compute |
+| `Your GPU does not have native support for FP4 computation` | a fallback is in use; expect weight-only performance |
+| `Graph capturing finished in N secs, took X GiB` | CUDA graphs on; X is subtracted from the KV cache |
+
+A fallback is not a bug, but a number measured on one is a number for that kernel, not for the format.
+docs/tuning.md records the kernel next to every 4-bit result for that reason.
+
+---
+
 ## Symptom: throughput is far below what the hardware should give
 
 Compute the decode ceiling and compare. See *Interpreting your own measurements* in

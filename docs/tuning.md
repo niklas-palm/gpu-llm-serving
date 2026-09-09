@@ -3,6 +3,21 @@
 The defaults in `config.yaml` come from the measurements in this document. They are here so you can
 tell when your workload justifies a different value, and so you know what was not measured.
 
+Three questions settle most of the configuration:
+
+1. **Does the model fit one GPU in fp8?** Yes: one engine per GPU, `tensorParallel: 1`, the smallest
+   instance size (*Choosing an instance type*). No: the smallest tensor-parallel degree that fits, then
+   as many engines as the host allows (*Topology*).
+2. **Do your prompts share a prefix, and with whom?** With every request (one system prompt): the cached
+   figures apply and the fleet is about half the unique-prompt size. Within a conversation or a tenant:
+   the cache only helps if the same engine sees the follow-up, so set `stickySessions` or route on the
+   prefix (*Prefix caching is a routing decision*). Not at all: size on the unique-prompt column.
+3. **Which wall are you at?** Long prompts and short answers: prefill, so compute and the prefix cache
+   decide. Short prompts and long answers: decode, so bandwidth, fp8 weights and an fp8 cache decide.
+   One command tells you (*Interpreting your own measurements*).
+
+Every number here was measured with vLLM 0.28.0; the kernels it picked are named where they matter.
+
 ---
 
 ## The one mental model worth having
@@ -33,11 +48,15 @@ Two consequences:
 
 A third follows from the first two and decides which lever works:
 
-- **Bytes read per token means *activated* weights.** A mixture-of-experts model with 30B parameters
-  but 3B active per token reads a tenth of what a dense 27B reads, and decodes accordingly. Measured on
-  one fleet, the dense model delivered a third of the MoE's request rate at the same precision (*Choosing
-  a model to host*). Total parameter count says how much VRAM you need; active parameter count says how
-  fast it runs.
+- **Bytes read per token means *activated* weights, for one request.** A mixture-of-experts model with
+  30B parameters but 3B active per token reads a tenth of what a dense 27B reads, and a single request
+  decodes accordingly. Under load the picture changes: each token in the batch picks its own experts,
+  and a batch of 64 touches nearly all of them, so a loaded step reads close to the whole model. The
+  mixture of experts still wins because that read is shared by the batch and the arithmetic per token
+  stays a tenth. Measured on one fleet, the dense model delivered a third of the MoE's request rate at
+  the same precision (*Choosing a model to host*); the batch-1 and loaded ceilings are worked out in
+  *Interpreting your own measurements*. Total parameter count says how much VRAM you need; active
+  parameter count says how fast it runs.
 
 A multi-GPU engine adds a third wall: the per-step cost of keeping N GPUs in lockstep (an all-reduce per
 layer, expert dispatch, and every kernel launched N times), which does not shrink as N grows. A 235B
@@ -1529,6 +1548,21 @@ concurrency limit at the client, or `maxNumSeqs` plus a short client timeout so 
 fast.
 
 ---
+
+## What this project does not do, and when to revisit
+
+Considered and left out, each with the condition that would bring it back:
+
+| Not done | Why not here | Revisit when |
+|---|---|---|
+| A prefix-aware router (a scheduler that knows which engine holds which prefix and each queue depth) | The load balancer plus `stickySessions` recovers most of the multi-turn gain (21% to 75% hit rate) with no new component | conversations span clients that cannot keep a cookie, or one upstream client fans out on behalf of many users |
+| Prefill and decode on separate engines (disaggregated serving) | Homogeneous single-GPU engines with a moderate prompt:answer ratio; the KV transfer between engines over PCIe would cost more than it saves | prompts grow past several thousand tokens with strict time-to-first-token targets, or the model needs TP>1 anyway |
+| KV cache offload to host memory or a shared store | The cache on one 96 GiB card held every load measured; the hit-rate problem was routing, not capacity | contexts of tens of thousands of tokens with reuse across engines |
+| Multi-instance GPU (four 24 GB slices per card) | A 30B fp8 model needs the whole card | a model under 20 GB with strict per-tenant isolation |
+| Pipeline parallelism, multi-node engines | Every model measured fits one instance | a model over 640 GB in fp8 |
+| Another engine (TensorRT-LLM, SGLang) | One engine, measured deeply, beats two measured shallowly for a sample | a kernel gap on a GPU generation this engine does not serve well |
+| Speculative decoding on by default | +47% at low load, −27% at the operating point (*EAGLE-3*) | your fleet runs at 16 or fewer per engine, or the batch-size schedule below holds up |
+| Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
 
 ## Interpreting your own measurements
 
