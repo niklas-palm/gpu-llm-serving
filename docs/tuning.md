@@ -1107,6 +1107,15 @@ draft length at a new batch size it stalled for about 30 s (p95 31 to 35 s at th
 anywhere. After a deploy with speculation on, sweep the concurrencies you intend to serve before taking
 traffic, or the warm-up in `scripts/benchmark.py` at one level is not enough.
 
+**A high acceptance rate is not a gain.** The 80B hybrid mixture-of-experts ships its own multi-token
+prediction head (`--speculative-config '{"method":"mtp","num_speculative_tokens":1}'`). On four TP=2
+engines across eight H100s the engine reported a mean acceptance length of 1.8, the draft right four
+times in five, and decode per request moved between −6% and +5%: the draft step plus a two-token verify
+across two GPUs cost about what the saved token was worth. Short-prompt throughput at high concurrency
+rose 9 to 21%, long unique prompts fell 15 to 20% and long cached prompts 21 to 31%. Not worth the flag on
+that model in 0.28.0. Judge speculation by the request rate and the per-request decode on your traffic,
+never by the acceptance rate the log prints.
+
 An earlier version of this document said EAGLE and multi-token prediction were not configuration options
 and had to ship inside the checkpoint. That was true of older engine versions and is wrong for 0.28.
 
