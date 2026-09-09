@@ -538,7 +538,8 @@ Register it as an OpenAI-compatible provider:
 | timeout | streamed requests have no limit; non-streamed must finish within 120 s, see [Access](#access) |
 
 Nothing else is needed. The gateway's own auth, rate limits and logging sit in front; this endpoint sees
-one shared key from the gateway.
+one shared key from the gateway. Leave `stickySessions` off behind a gateway: with one client and one
+cookie jar it would pin every request to a single engine.
 
 ### Available endpoints
 
@@ -691,8 +692,10 @@ streaming it completed all 40,000 tokens in 252 s.
 **At 1,920 concurrent, throughput stopped at the batch ceiling, not memory**: 244 of 256 batch slots in
 use, KV cache at 20%, zero preemptions. See *Engine metrics* in [docs/tuning.md](docs/tuning.md).
 
-**Fleet capacity is linear in instance count.** 6 instances delivered 99.2% of 6 × one; 8 delivered
-103% of 8 ×. Measure one instance, divide your demand by it, round up.
+**Fleet capacity is linear in instance count** for unique prompts. 6 instances delivered 99.2% of 6 ×
+one; 8 delivered 103% of 8 ×. Measure one instance, divide your demand by it, round up. Multi-turn
+traffic is the exception: its prefix-cache hits fall as the fleet grows unless sessions stick to an
+engine (*Prefix caching is a routing decision* in [docs/tuning.md](docs/tuning.md)).
 
 **Autoscaling recovered the latency budget.** A 15-minute run at 768 concurrent scaled 6 → 8 mid-run
 and averaged 111.7 rps at p95 7.11 s with 2 failures in 100,520 requests. A fixed 6 instances sat at p95

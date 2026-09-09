@@ -1606,6 +1606,23 @@ fast.
 
 ---
 
+## Where the numbers come from
+
+Every figure in this document was measured on vLLM 0.28.0 in its shipped container, through the
+CloudFront endpoint, with `scripts/benchmark.py` on an in-region EC2 client. Conditions that change
+between sections are stated where they matter; the campaigns behind them:
+
+| Measurements | Hardware | Models | Shape of the run |
+|---|---|---|---|
+| Single- and two-GPU topology, CPU, quantisation, EAGLE-3 on the 30B, autoscaling, fleet linearity | 1 to 8 × `g7e.2xlarge`, one `g7e.12xlarge` | 30B MoE fp8, bf16, AWQ, load-time fp8 | 60 to 120 s per level after warm-up, 64 to 1,920 in flight per fleet |
+| Every weight option, model families, EAGLE-3 on the 120B | 8 × `g7e.2xlarge` | 30B MoE, 27B dense (bf16, fp8, NVFP4), 120B MXFP4 (Marlin kernel), 120B NVFP4 hybrid | same matrix, 64 to 512 per fleet |
+| H100 comparison, multi-GPU topologies (TP, EP, DP) | one `p5.48xlarge` (8 × H100) | the same, plus a 235B MoE in fp8 and bf16 | same matrix, 64 to 512 per host |
+| Routing and the prefix cache, decode ceilings and the memory-controller measurement, KV precision by kernel, CUDA graph mode, warm restart, dynamic speculation, dense contrast, quality | 1 and 8 × `g7e.2xlarge` | 30B MoE fp8, 27B dense, 120B MXFP4 | streamed, 1 to 128 per engine, 60 to 120 s per level |
+
+Run-to-run noise on one engine is about ±4% on throughput and ±25% on the p95 of time to first token.
+A later engine release moves the kernel choices named in *The evidence* and *troubleshooting.md*, and
+with them every 4-bit figure and the KV precision result.
+
 ## What this project does not do, and when to revisit
 
 Considered and left out, each with the condition that would bring it back:
