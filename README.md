@@ -185,7 +185,7 @@ Smaller weights of the same model run faster and need fewer instances; measured 
 |---|---|---|---|
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | `"fp8"` | 14,900 | shipped default |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` | `""` | same | publisher's fp8; half the download |
-| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit; a sibling 4-bit build scored within noise of bf16 on gsm8k, this one is unscored |
+| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit, but built from the older thinking release of the model, not Instruct-2507: a different model, not a cheaper precision of this one (*NVFP4* in docs/tuning.md) |
 | any of the above + EAGLE-3 speculator in `extraArgs` | | +24% to +41% | one line; see [docs/tuning.md](docs/tuning.md) |
 
 bf16 with no quantisation measured 55 to 63% of fp8's throughput. Details, and the caveats, in *Quantisation is two

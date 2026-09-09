@@ -356,25 +356,40 @@ They interact in one direction:
 | quantised (FP8/4-bit) | **`fp8`** | +12% decode, and small weights leave ample headroom |
 | unquantised (bf16) | **`auto`** | fp8 raises memory pressure here rather than lowering it; see `gpuMemoryUtilization` |
 
-#### Does the cheaper precision answer worse? One check, on a standard task
+#### Does the cheaper precision answer worse? Two tasks, through the endpoint
 
-Throughput says nothing about answers, so each precision was scored through the endpoint with the same
-harness (lm-eval, gsm8k, 5-shot, greedy, 500 questions, chat template on, 768-token generation cap):
+Throughput says nothing about answers, so each served configuration was scored with the same harness
+through the endpoint (`scripts/quality.py`: gsm8k 5-shot and ifeval 0-shot, greedy, chat template on,
+500 gsm8k questions and all 541 ifeval prompts, 1,024-token generation cap). Standard error about ±1
+point on the 30B, ±2 on the 27B.
 
-| Weights | gsm8k exact match, strict | flexible |
-|---|---|---|
-| 30B MoE, publisher fp8 | **96.0%** | 96.2% |
-| 30B MoE, bf16 | 95.6% | 96.0% |
-| 27B dense, publisher fp8 | **72.2%** | 70.2% |
-| 27B dense, bf16 | 71.8% | 68.0% |
-| 27B dense, community NVFP4 | 70.4% | 66.2% |
+| Served configuration | gsm8k exact match (strict) | ifeval prompt-level strict | ifeval instruction-level strict |
+|---|---|---|---|
+| 30B MoE, publisher fp8, fp8 KV | 95.0% | 81.3% | 87.2% |
+| 30B MoE, publisher fp8, bf16 KV | 95.4% | 81.5% | 87.2% |
+| 30B MoE, bf16 weights | 95.8% | 80.2% | 86.2% |
+| 27B dense, publisher fp8 | 72.4% | 30.9% | 44.5% |
+| 27B dense, bf16 | 70.2% | 32.2% | 45.4% |
+| 27B dense, community NVFP4 | 67.2% | 30.5% | 44.4% |
+| 8B dense, publisher fp8 | 70.6% | 33.3% | 47.7% |
 
-The interval at 500 questions is about ±2 points on the 27B and ±1 on the 30B, so fp8 is
-indistinguishable from bf16 on both models and NVFP4 is within the interval of bf16. The 27B scores low
-in absolute terms because it reasons before answering and the generation cap cuts long chains; the
-comparison across its precisions is like for like. One task and 500 items is a check, not a
-certification: run your own prompts before switching, and score by prompt-length bucket, since a small
-aggregate drop can hide a consistent loss on one kind of input.
+What the rows say:
+
+- **fp8 weights cost nothing measurable** on either model or task, and neither does the fp8 KV cache
+  (30B: 95.0 against 95.4 and 81.3 against 81.5). The 2× throughput of fp8 comes for free on these tasks.
+- **The community NVFP4 build of the 27B costs 3 to 5 gsm8k points against bf16**, in two separate runs
+  (−1.4 and −3.0 against bf16; −5.2 against fp8), and nothing on ifeval. Small, but it is the one precision
+  effect that showed twice. Its +30% throughput over fp8 buys that.
+- **The 27B and 8B score low in absolute terms because they think before answering** and the cap cuts
+  long chains; ifeval formats fail wholesale under a cap. The comparison across precisions of the same
+  model is like for like; the comparison across models is not.
+- **Check the base model of a community quantisation before comparing it to anything.** The 30B NVFP4
+  build above is quantised from a different release; its scores are not a precision result.
+- gsm8k accuracy falls mildly with prompt length for every model (96.8 to 93.6% across quartiles for the
+  30B fp8); the script prints the quartiles so a precision that loses only on long prompts shows.
+
+Two tasks and 500 items is a check, not a certification: run `scripts/quality.py` on your own prompts
+before switching, and compare deployments with each other, not with published numbers.
 
 #### Every weight option, measured
 
@@ -422,7 +437,11 @@ only on quality grounds.
 #### NVFP4: Blackwell's native 4-bit, measured on eight instances
 
 `nvidia/Qwen3-30B-A3B-NVFP4` with an fp8 KV cache, against load-time FP8 on the same eight
-`g7e.2xlarge`, unique 1,000-token prompts:
+`g7e.2xlarge`, unique 1,000-token prompts. **Read this as a kernel and format measurement, not a
+precision comparison:** the checkpoint's model card names `Qwen/Qwen3-30B-A3B`, the earlier hybrid
+thinking release, as its base, not the Instruct-2507 weights the fp8 rows use. Scored on gsm8k it
+answered 14 to 26 points lower and thought past the generation cap; that is a different model, not what
+4-bit costs. The like-for-like 4-bit comparison is the 27B below.
 
 | Concurrency | FP8 input tok/s | NVFP4 | Gain | p95 FP8 | p95 NVFP4 |
 |---|---|---|---|---|---|
@@ -432,9 +451,9 @@ only on quality grounds.
 
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
-another ~15 GiB. On gsm8k the 27B NVFP4 build scored within the sampling interval of its bf16 original
-(*Does the cheaper precision answer worse?*); that is one task, so FP8 stays the default. To use it, set
-`modelId` to the NVFP4 checkpoint and clear `quantization`.
+another ~15 GiB. On gsm8k the 27B NVFP4 build scored 3 to 5 points below its bf16 original in two runs
+(*Does the cheaper precision answer worse?*), so FP8 stays the default. To use a 4-bit build, set `modelId`
+to the checkpoint and clear `quantization`, and check its base model first.
 
 **Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
 quantises bf16 weights at load time the way `fp8` does. On g7e the engine refuses to start:
@@ -711,6 +730,40 @@ If host contention bites at 8 engines, the fix is fewer, wider engines: 4 × TP=
 
 ---
 
+## Long prompts: prefill slows with length, and the cache is the whole game
+
+Everything above was measured at 1,000 to 4,000 prompt tokens. Measured at 16k, 32k and 64k with the 30B
+fp8 mixture-of-experts, streamed, unique prompts and then the same prompts with their prefix already
+cached:
+
+| Prompt tokens | One g7e engine, unique: input tok/s, TTFT p50, per-request decode | Eight H100s, unique: input tok/s, TTFT p50 | Cached prefix: TTFT p50 |
+|---|---|---|---|
+| 4,000 | ~36,000 inside one request | 212,000 at 256 in flight, 0.18 s | |
+| 16,000 | 11,000 to 18,000 at 2 to 16 in flight, 0.6 to 1.5 s, 106 to 18 tok/s | 215,000 at 128, 0.58 s | 60 to 90 ms (g7e), 0.18 s (H100 at 64k) |
+| 32,000 | 11,500 to 12,800 at 2 to 4, 2.4 to 3.0 s | 169,000 at 64, 1.6 s | 80 to 110 ms |
+| 64,000 | 8,300 at 1 to 2, 5.2 s; 5,800 at 8, 21 s | 110,000 at 32, 4.5 s (p95 11.8 s) | 140 to 170 ms |
+
+Four things follow:
+
+- **Prefill tokens per second is not a constant of the GPU; it falls with prompt length.** Attention's
+  share of prefill grows with the square of the prompt while the expert work grows linearly, so the same
+  engine that prefills 36,000 tok/s at 4k does 8,300 at 64k, and a host that peaks at 215,000 between 4k
+  and 16k is at 110,000 at 64k. Size a long-prompt fleet from a long-prompt measurement.
+- **A cached long prefix costs nothing.** Time to first token at 64k fell from 5 s to 0.14 s when the
+  prefix was resident, and the cached input rate reached 138,000 tok/s on one g7e engine and 879,000 on
+  eight H100s: 8× the unique rate at 64k, against 1.7× at 1k. For long-context traffic the prefix cache
+  and the routing that keeps a conversation on its engine (*Prefix caching is a routing decision*) decide
+  the fleet size; the GPU's prefill speed is the fallback path.
+- **Concurrency at long context costs latency before it costs memory.** At 64k on one engine, decode per
+  request fell from 131 tok/s alone to 4 tok/s at 8 in flight, and TTFT p95 reached 42 s, while the KV
+  cache never passed 37% and nothing was preempted: chunked prefill of the neighbours' prompts occupies
+  the engine. On the H100 host, 64k requests hold about 3 GiB of KV each in fp8, so 43 GiB per GPU holds
+  about 14 of them; that, not compute, capped the batch there.
+- **The model's 262k context limit was never the limit; time to first token was.** `maxModelLen` only
+  matters where the weights nearly fill the card (*`maxModelLen`*).
+
+---
+
 ## Engine tuning
 
 ### `gpuMemoryUtilization: 0.95`: the biggest single effect for a model that fills the card
@@ -873,19 +926,15 @@ At high concurrency the KV cache is roughly half of all decode memory traffic, a
 almost none, so halving it is worth close to 10% with a full batch and nothing alone. Smaller entries
 also fit more requests in the same VRAM.
 
-**Which one wins on long cached prompts depends on the attention kernel, so measure it on your GPU.**
-Two measurements, opposite signs:
-
-| GPU, attention backend | Unique prompts | 4,000-token prompts with a shared prefix |
-|---|---|---|
-| This GPU, FlashInfer, 30B MoE, one engine | fp8 **+4 to +10%** (ref), +7 to +27% (long) | fp8 **+18 to +39%** (17.1 against 12.3 req/s at 64) |
-| H100, FlashAttention, 235B MoE at TP=4 | fp8 +5 to +12% | **`auto` +20 to +30%** (81.7 against 67.3 req/s at 512, reproduced) |
-
-On this GPU the FlashInfer path reads the fp8 cache natively and gains from half the bytes on every
-shape, down to one request in flight (170 against 155 tokens per second). On the H100 the FlashAttention
-path paid a dequantise cost per cached token that outweighed the bytes saved once the prompt was long
-and mostly cached. Same engine version, same flag, different kernel. The startup log names the backend
-(*troubleshooting.md*, "Which kernels did the engine pick?").
+**Measured in three places, fp8 was neutral to positive in all but one.** On this GPU with the 30B, fp8
+won every shape including long cached prompts (17.1 against 12.3 req/s at 64 on 4,000-token shared
+prompts). On eight H100s with the same model, from 1k to 64k prompts: nothing separates them below 16k
+(±5%), fp8 wins 6 to 18% on unique prompts from 16k up because twice the tokens fit and the batch grows,
+and cached long prompts are a wash. The one exception was a 235B mixture-of-experts at TP=4 on H100s,
+where 4,000-token cached prompts ran 20 to 30% faster with `auto`, reproduced twice on that model and
+not on the 30B at TP=1: a property of that model and topology, not of the GPU. Decode speed per request
+did not depend on the cache precision anywhere. Quality: no measurable effect on gsm8k or ifeval
+(*Does the cheaper precision answer worse?*).
 
 **On by default here.** It is a lossy store for cached attention state; to rule that out, set
 `kvCacheDtype: auto`.
@@ -1053,6 +1102,7 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 27B dense, bf16 | 19.0 (20.6 s) | 38 | 13,000, saturated | 4.7 |
 | 120B MoE (5B active), MXFP4, Marlin kernel (see note) | 64.1 (7.4 s) | 102 | 102,000 | 19.1 |
 | 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
+| 8B dense, fp8 (one engine, scaled ×8 from 17.0 req/s at 64 per engine) | ~136 | ~270 (cached, 128 per engine) | 155,000 | ~57 |
 
 Which kernel ran matters as much as which weights. The startup log names it. On this GPU the 120B
 MXFP4 experts ran through the Marlin backend, which dequantises to bf16 for the matmul; in vLLM 0.28.0
@@ -1124,7 +1174,14 @@ the kernels of 0.28.0 and no other release.
     length request needs 24 GiB of KV and 16 GiB were left. `maxModelLen: 32768` started it. The same
     card then hit 100% KV and 150 preemptions under 4,000-token prompts at 64 per engine: bf16 on 80 GB
     is KV-starved for long prompts. On 96 GB nothing of this shows.
-12. **A model that needs several GPUs pays a third tax, and the topology decides how much.** Beyond
+12. **Below the model that fits, smaller is cheaper per request but not per prompt token.** An 8B dense
+    model in fp8 on one engine held 17.0 req/s at 64 in flight against the 30B mixture-of-experts' 12.8
+    (+33%, the cheapest request measured on this GPU), but prefilled 4,000-token prompts *slower*
+    (19,400 against 22,400 input tok/s): eight billion parameters of arithmetic per prompt token against
+    three billion active. Short prompts favour the small dense model; long prompts favour the mixture
+    of experts. Its batch-1 decode ran at 72% of its bandwidth ceiling, dense behaviour, against the
+    MoE's 33%.
+13. **A model that needs several GPUs pays a third tax, and the topology decides how much.** Beyond
     compute and bandwidth there is the cost of keeping N GPUs in lockstep: an all-reduce per layer,
     expert dispatch, every kernel launched N times. A 235B mixture-of-experts (22B active) on eight
     H100s spent about 5% of each decode step reading weights and the rest in that overhead, so bf16
@@ -1133,7 +1190,7 @@ the kernels of 0.28.0 and no other release.
     dollar basis: partly the seven times more active parameters, partly the lockstep. The rule that
     follows: the smallest tensor-parallel degree that fits, then replicas, and FP8 because it lowers
     that degree, not because the arithmetic is faster.
-13. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
+14. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
     37 s in the first shape after every deploy on both GPU families (lazy kernel compilation and
     autotuning), then ran with p95 5 to 9 s. The benchmark script's `--warmup-seconds` covers the
     first requests; for such models run a throwaway minute first.
@@ -1653,7 +1710,10 @@ between sections are stated where they matter; the campaigns behind them:
 | H100 comparison, multi-GPU topologies (TP, EP, DP) | one `p5.48xlarge` (8 × H100) | the same, plus a 235B MoE in fp8 and bf16 | same matrix, 64 to 512 per host |
 | Routing and the prefix cache, decode ceilings and the memory-controller measurement, KV precision by kernel, CUDA graph mode, warm restart, dynamic speculation, dense contrast, quality | 1 and 8 × `g7e.2xlarge` | 30B MoE fp8, 27B dense, 120B MXFP4 | streamed, 1 to 128 per engine, 60 to 120 s per level |
 
-Run-to-run noise on one engine is about ±4% on throughput and ±25% on the p95 of time to first token.
+Run-to-run noise, measured by repeating configurations: an eight-engine H100 host reproduced every row
+within ±2% back to back and across two days and two regions; a single g7e engine within ±3 to 4%
+(cached shapes ±4%), and two regions' single-engine baselines matched within 4%. The p95 of time to
+first token moves ±25% between identical runs. A difference inside those bands is not a result.
 A later engine release moves the kernel choices named in *The evidence* and *troubleshooting.md*, and
 with them every 4-bit figure and the KV precision result.
 
