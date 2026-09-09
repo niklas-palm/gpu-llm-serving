@@ -735,7 +735,8 @@ scripts/
   build_image.py          build and push to ECR, via CodeBuild
   endpoint_info.py        print the endpoint, key and a ready-to-paste request
   test_endpoint.py        smoke-test a deployed endpoint
-  benchmark.py            concurrency sweep: req/s, tok/s, p50/p95/p99 per level
+  benchmark.py            concurrency sweep: req/s, tok/s, p50/p95/p99 per level; --stream for time to
+                          first token and goodput, --turns for multi-turn conversations
 LICENSE                   MIT-0
 docs/
   tuning.md               choosing an instance type and tuning the engine

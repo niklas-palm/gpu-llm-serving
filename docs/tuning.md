@@ -1199,10 +1199,20 @@ see *Choosing an operating concurrency*.
   single-process result was 16% low.
 - **Watch p99, not just p95.** At 1024 concurrent, p95 was 7.60 s while p99 was 13.10 s.
 - **Use your own prompt shapes and prefix-sharing.** It moves the answer by 2×.
+- **Stream, and read three numbers, not one.** End-to-end latency folds queueing, prefill and decode into
+  one figure that moves for three unrelated reasons. Time to first token is queue plus prefill; the
+  decode rate after it is generation speed; goodput is the requests per second that met the budget.
+  `--stream` adds the first, measures the second properly, and `--budget-seconds` adds the third.
+- **Measure conversations as conversations.** A shared prefix on every request is the one reuse pattern
+  round-robin routing handles. `--turns N` resends a growing conversation on one session, which is what
+  multi-turn traffic does to the prefix cache (*Prefix caching is a routing decision*).
+- **The p95 of time to first token is noisy.** Two identical runs at 64 in flight on one engine
+  differed by 25% on it; treat a change under that as no change.
 
 `scripts/test_endpoint.py` is a smoke test: it shows the endpoint holds up, not where its ceiling is.
 `scripts/benchmark.py` does the sweep above: multi-process, warm-up first, aggregate and per-request
-numbers from the same run, unique prompts unless you pass `--shared-prefix`.
+numbers from the same run, unique prompts unless you pass `--shared-prefix`, time to first token and
+goodput with `--stream` and `--budget-seconds`, conversations with `--turns`.
 
 ---
 
@@ -1584,6 +1594,8 @@ Considered and left out, each with the condition that would bring it back:
 | Another engine (TensorRT-LLM, SGLang) | One engine, measured deeply, beats two measured shallowly for a sample | a kernel gap on a GPU generation this engine does not serve well |
 | Speculative decoding on by default | +47% at low load, −27% at the operating point (*EAGLE-3*) | your fleet runs at 16 or fewer per engine, or the batch-size schedule below holds up |
 | Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
+| Suffix decoding (a better n-gram) | needs a package the engine image does not ship; n-gram itself measured −58% | agentic or code-editing traffic with heavy repetition, and an image rebuild |
+| Structured output and tool-call grammars in the benchmark | not measured; they add per-request grammar compilation | your traffic is mostly tool calls or JSON schemas |
 
 ## Interpreting your own measurements
 
