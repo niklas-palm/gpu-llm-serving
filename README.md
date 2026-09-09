@@ -673,8 +673,9 @@ aws ec2 describe-instances --region "$REGION" \
 
 ## Measurements
 
-The shipped default, deployed into an empty region and loaded with 1,000-token **unique** prompts and
-190 output tokens over `/v1/responses`:
+Every row behind the docs is in [measurements/](measurements/README.md). The shipped default, deployed
+into an empty region and loaded with 1,000-token **unique** prompts and 190 output tokens over
+`/v1/responses`:
 
 | Instances | Concurrency | Input tok/s | Requests/sec | p95 | Errors |
 |---|---|---|---|---|---|
@@ -740,11 +741,17 @@ scripts/
   endpoint_info.py        print the endpoint, key and a ready-to-paste request
   test_endpoint.py        smoke-test a deployed endpoint
   benchmark.py            concurrency sweep: req/s, tok/s, p50/p95/p99 per level; --stream for time to
-                          first token and goodput, --turns for multi-turn conversations
+                          first token and goodput, --turns for multi-turn conversations, --schema for
+                          structured output, --reasoning-effort for reasoning models
+  quality.py              score the served model on gsm8k and ifeval through the endpoint (lm-eval)
+  size_fleet.py           one engine's measured capacity -> instances and price per million tokens
 LICENSE                   MIT-0
 docs/
   tuning.md               choosing an instance type and tuning the engine
   troubleshooting.md      symptom → cause → fix
+measurements/
+  benchmarks.csv          every benchmark row behind the docs, with its conditions
+  quality.csv             every quality score, with its settings
 tests/
   test_hardware.py        instance catalog, derived values, config validation
   test_template.py        properties of the synthesised template a deployment depends on
