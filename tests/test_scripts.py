@@ -157,7 +157,8 @@ def test_streaming_measures_time_to_first_token_and_reads_usage_from_the_complet
         def __enter__(self): return self
         def __exit__(self, *a): return False
         def iter_lines(self):
-            yield b"event: response.output_text.delta"
+            yield b"event: response.reasoning_text.delta"
+            yield b"data: " + js.dumps({"type": "response.reasoning_text.delta", "delta": "hmm"}).encode()
             yield b"data: " + js.dumps({"type": "response.output_text.delta", "delta": "hi"}).encode()
             yield b""
             yield b"data: " + js.dumps({"type": "response.completed",

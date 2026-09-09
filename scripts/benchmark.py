@@ -87,11 +87,14 @@ def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool) -> tu
             if not line.startswith(b"data: "):
                 continue
             ev = json.loads(line[6:])
-            if ev.get("type") == "response.output_text.delta":
-                if not ttft:
-                    ttft = time.perf_counter() - t0
+            kind = ev.get("type", "")
+            # The first generated token of any kind: a reasoning model streams its thinking first and
+            # its answer text only at the end, and time to first token must not wait for the answer.
+            if kind.endswith(".delta") and not ttft:
+                ttft = time.perf_counter() - t0
+            if kind == "response.output_text.delta":
                 parts.append(ev.get("delta", ""))
-            elif ev.get("type") == "response.completed":
+            elif kind == "response.completed":
                 usage = (ev.get("response") or {}).get("usage") or {}
     dt = time.perf_counter() - t0
     if not usage:
