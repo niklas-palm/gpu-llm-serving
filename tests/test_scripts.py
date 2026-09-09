@@ -175,3 +175,27 @@ def test_streaming_measures_time_to_first_token_and_reads_usage_from_the_complet
     r = q.get(timeout=5)
     assert r["ok"] >= 1 and r["in"] == 12 * r["ok"] and r["out"] == 7 * r["ok"]
     assert len(r["ttft"]) == r["ok"] and all(t > 0 for t in r["ttft"])
+
+
+def test_schema_and_reasoning_effort_land_in_the_request_body(monkeypatch):
+    import multiprocessing as mp
+    bench = _load("benchmark")
+    seen = []
+
+    class Resp:
+        status_code = 200
+        def json(self): return {"usage": {"input_tokens": 1, "output_tokens": 1}, "output": []}
+
+    class Session:
+        def __init__(self): self.headers = {}
+        def post(self, url, json, timeout): seen.append(json); return Resp()
+
+    monkeypatch.setattr(bench.requests, "Session", Session)
+    monkeypatch.setattr("signal.signal", lambda *a: None)
+    q = mp.Queue()
+    bench.worker("http://u", "k", "m", conc=1, in_tok=[10], out_tok=[5], seconds=0.05, shared=True, q=q,
+                 schema=True, effort="low")
+    q.get(timeout=5)
+    body = seen[0]
+    assert body["text"]["format"]["type"] == "json_schema" and body["text"]["format"]["schema"] == bench.SCHEMA
+    assert body["reasoning"] == {"effort": "low"}

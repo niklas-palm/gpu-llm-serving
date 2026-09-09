@@ -8,6 +8,8 @@
         --input-tokens 1000,4000,8000,8000,16000 --output-tokens 200,400,400,800     # a mixed workload
     python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --stream --budget-seconds 8
     python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --turns 6                # multi-turn
+    python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --schema                 # JSON output
+    python3 scripts/benchmark.py https://<endpoint> --key "$API_KEY" --reasoning-effort low   # reasoning models
 
 One row per concurrency level: requests/sec, input and output tokens/sec, latency p50/p95/p99, and the
 decode speed a single request saw. Size a fleet on the aggregate numbers; check your latency budget on
@@ -25,6 +27,11 @@ each thread opens a session, sends its prompt, appends the answer and a follow-u
 conversation again, N times. Every turn after the first is a prefix-cache hit if it lands on the engine
 that served the previous turn, so this shape measures the load balancer as much as the engine. Each
 session keeps its own cookies, so sticky sessions on the load balancer are honoured.
+
+--schema asks for a JSON object matching a fixed schema (structured output), which is what tool-calling and
+agent traffic does; the engine compiles a grammar per request and constrains every token. --reasoning-effort
+sets the effort of a reasoning model, which changes how many tokens an answer costs far more than any
+engine flag.
 
 Load is spread across processes, not threads: one Python process driving 768 connections measured a
 third of the true throughput.
@@ -55,6 +62,13 @@ import requests
 FILLER = ("The customer placed an order containing several items and asked about delivery timing, "
           "refunds, and the status of a previous return. ")
 FOLLOW_UP = " Thanks. One more question about the same order: what happens if only part of it arrives?"
+SCHEMA = {"type": "object", "additionalProperties": False, "required": ["summary", "items", "refund_eligible"],
+          "properties": {"summary": {"type": "string"},
+                         "items": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                                                              "required": ["name", "status"],
+                                                              "properties": {"name": {"type": "string"},
+                                                                             "status": {"type": "string"}}}},
+                         "refund_eligible": {"type": "boolean"}}}
 
 
 def prompt(n_tokens: int, shared: bool) -> str:
@@ -64,10 +78,15 @@ def prompt(n_tokens: int, shared: bool) -> str:
     return (body if shared else f"Request {uuid.uuid4()}. {body}")[: n_tokens * 5]
 
 
-def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool) -> tuple[float, float, int, int, str]:
+def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool, schema: bool = False,
+        effort: str = "") -> tuple[float, float, int, int, str]:
     """One request. Returns (latency, time to first token, input tokens, output tokens, answer text).
     Time to first token is 0 without streaming. Raises on anything but a well-formed answer."""
     body = {"model": model, "input": text, "max_output_tokens": max_out, "temperature": 0.0}
+    if schema:
+        body["text"] = {"format": {"type": "json_schema", "name": "order", "strict": True, "schema": SCHEMA}}
+    if effort:
+        body["reasoning"] = {"effort": effort}
     t0 = time.perf_counter()
     if not stream:
         r = sess.post(f"{url}/v1/responses", json=body, timeout=300)
@@ -104,7 +123,7 @@ def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool) -> tu
 
 def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok: list[int],
            seconds: float, shared: bool, q: mp.Queue, stream: bool = False, turns: int = 1,
-           budget: float = 0.0) -> None:
+           budget: float = 0.0, schema: bool = False, effort: str = "") -> None:
     import signal
     import threading
 
@@ -143,7 +162,8 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
                     break
                 try:
                     text = text or prompt(random.choice(in_tok), shared)
-                    dt, ttft, used_in, used_out, answer = ask(sess, url, model, text, random.choice(out_tok), stream)
+                    dt, ttft, used_in, used_out, answer = ask(sess, url, model, text, random.choice(out_tok), stream,
+                                                              schema, effort)
                 except (requests.RequestException, ValueError, AttributeError, TypeError, KeyError):
                     # A body that is not the promised shape is a failure too. Left uncaught, it killed
                     # the thread silently and the row reported a plausible number at lower concurrency.
@@ -175,7 +195,7 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
     q: mp.Queue = mp.Queue()
     procs = [mp.Process(target=worker, args=(a.url, a.key, model, n, a.input_tokens, a.output_tokens,
                                              a.seconds, a.shared_prefix, q, a.stream, a.turns,
-                                             a.budget_seconds)) for n in per_proc if n]
+                                             a.budget_seconds, a.schema, a.reasoning_effort)) for n in per_proc if n]
     for p in procs:
         p.start()
     # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level, the drain
@@ -209,6 +229,7 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
         "goodput_rps": sum(r["in_budget"] for r in results) / wall,
         "failed": fail,
         "decode_tok_s_per_request": statistics.mean(decode) if decode else 0.0,
+        "output_tokens_per_request": sum(r["out"] for r in results) / ok if ok else 0.0,
     }
 
 
@@ -247,6 +268,10 @@ def main() -> int:
                     help="turns per conversation; each turn resends the conversation so far plus the answer")
     ap.add_argument("--budget-seconds", type=float, default=0.0,
                     help="latency budget; adds goodput, the requests/s that finished inside it")
+    ap.add_argument("--schema", action="store_true",
+                    help="ask for structured JSON output against a fixed schema, as tool-calling traffic does")
+    ap.add_argument("--reasoning-effort", default="", choices=["", "low", "medium", "high"],
+                    help="reasoning effort for models that support it; changes tokens per answer")
     ap.add_argument("--json", action="store_true", help="also print one JSON line per level")
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
@@ -270,7 +295,8 @@ def main() -> int:
     print(f"model {model}\n{shape(a.input_tokens)} input / {shape(a.output_tokens)} output tokens, "
           f"{'shared-prefix' if a.shared_prefix else 'unique'} prompts"
           f"{f', {a.turns}-turn conversations' if a.turns > 1 else ''}"
-          f"{', streamed' if a.stream else ''}, {a.seconds:g}s per level "
+          f"{', streamed' if a.stream else ''}{', structured output' if a.schema else ''}"
+          f"{f', reasoning effort {a.reasoning_effort}' if a.reasoning_effort else ''}, {a.seconds:g}s per level "
           f"after {a.warmup_seconds:g}s warm-up, {a.processes} client processes\n")
 
     # Warm-up: the first requests pay for CUDA graph capture and kernel autotuning. Measuring from the
