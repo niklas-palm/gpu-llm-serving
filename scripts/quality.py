@@ -26,8 +26,13 @@ does not. Run the same command against two deployments and compare rows, or pass
 fraction of questions whose answer changed: a precision can keep the aggregate and still flip one
 answer in ten.
 
-A thinking model must be served with thinking off for these settings (see docs/tuning.md), or the
-chain of thought eats the cap and every generative score collapses. Do not compare with published
+Two things about the deployment under test. A thinking model must be served with thinking off for these
+settings (see docs/tuning.md), or the chain of thought eats the cap and every generative score
+collapses. And the log-likelihood requests ask the engine for the probability of every prompt token,
+which materialises the whole vocabulary for every position of a 2,000-token few-shot prompt: several
+GiB per request. At the serving default of 0.95 memory utilisation the engine had 2.4 GiB free and died
+with a CUDA out-of-memory on the first batch. Deploy the configuration you are scoring with
+`gpuMemoryUtilization: 0.85` for the duration of the evaluation; --loglik-concurrency stays low. Do not compare with published
 numbers, which use other prompts and settings; compare deployments with each other.
 """
 
@@ -80,7 +85,7 @@ def served_model(url: str, key: str) -> str:
 
 def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Namespace, model: str, out: str) -> None:
     if kind == "loglik":
-        model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.concurrency},"
+        model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.loglik_concurrency},"
                       f"max_retries=3,tokenized_requests=True,tokenizer={a.tokenizer or model},max_length=8192")
         cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args]
     else:
@@ -172,7 +177,9 @@ def main() -> int:
     ap.add_argument("--key", required=True, help="the ApiKeyValue stack output")
     ap.add_argument("--suite", default="standard", choices=sorted(SUITES), help="which task set")
     ap.add_argument("--tokenizer", default="", help="tokenizer id for log-likelihood tasks; default the served model id")
-    ap.add_argument("--concurrency", type=int, default=16, help="requests in flight")
+    ap.add_argument("--concurrency", type=int, default=16, help="generative requests in flight")
+    ap.add_argument("--loglik-concurrency", type=int, default=4,
+                    help="log-likelihood requests in flight; each holds vocabulary x prompt logits on the GPU")
     ap.add_argument("--output", default="", help="directory for the harness output; default a temp dir")
     ap.add_argument("--tag", default="", help="label written to --csv rows")
     ap.add_argument("--csv", default="", help="append one row per task here")
