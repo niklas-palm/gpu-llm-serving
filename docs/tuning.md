@@ -16,7 +16,19 @@ Three questions settle most of the configuration:
    decide. Short prompts and long answers: decode, so bandwidth, fp8 weights and an fp8 cache decide.
    One command tells you (*Interpreting your own measurements*).
 
-Every number here was measured with vLLM 0.28.0; the kernels it picked are named where they matter.
+Every number here was measured with vLLM 0.28.0; the kernels it picked are named where they matter, and
+the rows themselves are in [measurements/](../measurements/README.md).
+
+Reading paths, if you have one job today:
+
+- **Sizing a fleet:** *Choosing an instance type*, then *Choosing an operating concurrency*, then *Sizing
+  a fleet*. `scripts/benchmark.py` on one instance and `scripts/size_fleet.py` turn the measurement into
+  instances and a price per million tokens.
+- **Choosing a model or a precision:** *Choosing a model to host*, then *Quantisation is two independent
+  decisions*, then *Does the cheaper precision answer worse?*; `scripts/quality.py` runs the check.
+- **A fleet that is slower than it should be:** *Which wall are you at?*, *Interpreting your own
+  measurements*, then *Watching a running fleet* and [troubleshooting.md](troubleshooting.md).
+- **A model that needs several GPUs:** *Tensor parallelism*, then *Topology*.
 
 ---
 

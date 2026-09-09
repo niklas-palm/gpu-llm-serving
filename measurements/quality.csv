@@ -1,0 +1,11 @@
+date,gpu,model,weights,kv_cache,task,setting,metric,score,stderr,n,engine_version,harness
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3-30B-A3B-Instruct-2507-FP8,fp8 (publisher),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match strict,0.960,0.009,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3-30B-A3B-Instruct-2507-FP8,fp8 (publisher),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match flexible,0.962,0.009,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3-30B-A3B-Instruct-2507,bf16,auto,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match strict,0.956,0.009,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3-30B-A3B-Instruct-2507,bf16,auto,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match flexible,0.960,0.009,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3.8-27B-FP8,fp8 (publisher),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match strict,0.722,0.020,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3.8-27B-FP8,fp8 (publisher),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match flexible,0.702,0.020,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3.8-27B,bf16,auto,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match strict,0.718,0.020,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,Qwen/Qwen3.8-27B,bf16,auto,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match flexible,0.680,0.021,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,unsloth/Qwen3.8-27B-NVFP4,NVFP4 (community),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match strict,0.704,0.020,500,vLLM 0.28.0,lm-eval 0.4.9.1
+2026-09-09,RTX PRO 6000 Blackwell SE 96 GB,unsloth/Qwen3.8-27B-NVFP4,NVFP4 (community),fp8,gsm8k,5-shot greedy chat template max_gen_toks 768,exact_match flexible,0.662,0.021,500,vLLM 0.28.0,lm-eval 0.4.9.1
