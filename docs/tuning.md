@@ -1149,6 +1149,7 @@ driven from an in-region client. At 512 in flight, whole fleet:
 | 120B Mamba-hybrid MoE (12B active), NVFP4 | 30.5 (14.8 s) | 34 | engines crashed | not reached |
 | 8B dense, fp8 (one engine, scaled ×8 from 17.0 req/s at 64 per engine) | ~136 | ~270 (cached, 128 per engine) | 155,000 | ~57 |
 | 80B hybrid MoE (3B active, linear attention on 3 of 4 layers), fp8, 4 × TP=2 on eight H100s | 34.0 at 256 | 36.0 | 76,000 | 22.1 |
+| 80B hybrid MoE, fp8, one engine on this GPU (scaled ×8 from 7.5 req/s at 64 per engine) | ~60 | ~89 | ~140,000 | ~34 |
 
 Which kernel ran matters as much as which weights. The startup log names it. On this GPU the 120B
 MXFP4 experts ran through the Marlin backend, which dequantises to bf16 for the matmul; in vLLM 0.28.0
@@ -1243,8 +1244,15 @@ the kernels of 0.28.0 and no other release.
     cached gain rose to 58 to 136% as attention's share of prefill grew. The same model decoded a single
     stream at 184 to 220 tokens/s on two H100s, the fastest measured on any model, and delivered 43% of
     the 30B's request rate on the same eight GPUs (half the engines at TP=2, the lockstep tax, and
-    younger kernels: 483 s to initialise). A new architecture has to be measured on its own shape of
-    traffic before the rules above are applied to it.
+    younger kernels: 483 s to initialise). The same 80B fits one 96 GB card in fp8 (75.5 GiB of weights,
+    11.5 GiB of KV cache at a 32k context) and there it showed the other half of the mixture-of-experts
+    rule: with the same 3B active parameters as the 30B it delivered 21 to 41% fewer unique-prompt
+    requests and 41 to 55% fewer cached ones, because a loaded step reads the union of the experts the
+    batch touches, and 80B of experts is 2.7× the bytes of 30B, while the small KV pool caps the batch.
+    It won one shape, 800-token answers, by 30 to 48% at low and mid load: the linear-attention layers
+    make each extra output token cheap. **Total parameters decide the bytes per loaded step; active
+    parameters decide the arithmetic; the attention type decides how cost grows with length.** A new
+    architecture has to be measured on its own shape of traffic before the rules above are applied to it.
 15. **Warm up compile-heavy engines before measuring.** The 120B MXFP4 model showed a p95 of 24 to
     37 s in the first shape after every deploy on both GPU families (lazy kernel compilation and
     autotuning), then ran with p95 5 to 9 s. The benchmark script's `--warmup-seconds` covers the
