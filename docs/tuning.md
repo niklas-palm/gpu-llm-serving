@@ -407,7 +407,16 @@ served configuration on one 96 GB GPU; deltas are against the family's bf16 row.
 | publisher fp8, fp8 KV | +0.1 | 0.0 | +0.2 | −0.6 | +0.3 | −0.6 | −0.9 | +0.4% | 2 to 4% |
 | community NVFP4 | −1.1 | +0.6 | +1.6 | +1.4 | −0.6 | 0.0 | +0.4 | +1.9% | 4 to 6% |
 
-What generalises across the four families:
+**Mistral Small 3.2 24B (dense, a second model family), a partial check.** Its tokenizer is not the Hub
+tokenizer, so the harness had to send text instead of token ids, and the official bf16 checkpoint in the
+engine's mistral tokenizer mode returned chance-level log-likelihoods, so only its generative scores
+count. Red Hat fp8 against the official bf16 on those: GSM8K (flexible extraction, the model does not
+write the `####` format) 93.4 against 91.6, IFEval 75.1 against 73.9: fp8 free again. Red Hat NVFP4
+against fp8 on the log-likelihood tasks: ARC 71.4 against 72.2, HellaSwag 75.8 against 76.6, Winogrande
+77.0 against 79.0, TruthfulQA 59.3 against 61.5, a 1 to 2 point cost, the same as every other 4-bit
+build. Its generative passes were lost to an engine disconnect and were not repeated.
+
+What generalises across the five families:
 
 - **fp8 weights cost nothing measurable.** Every task within one standard error of bf16 on every model,
   perplexity 0.2 to 0.7% worse, 2 to 4% of answers flipped with gains about equal to losses. Load-time
@@ -443,7 +452,8 @@ What generalises across the four families:
 What the check is not: 500 questions per task and 2,850 for MMLU is enough to see a precision that
 answers worse, not to certify one that does not; two tasks per aggregate are generative, and code was
 left out because no code task runs correctly for an instruct model over an API (`scripts/quality.py`
-explains). Run it on your own prompts before switching a fleet.
+explains). Models whose tokenizer is not the Hub's (Mistral) need `--text-prompts` and lose the
+perplexity row. Run it on your own prompts before switching a fleet.
 
 #### Every weight option, measured
 
