@@ -716,11 +716,13 @@ and *NVFP4* in [docs/tuning.md](docs/tuning.md).
 **Measured since, on other hardware and models** (all in [docs/tuning.md](docs/tuning.md) and
 [measurements/](measurements/README.md)): tensor, expert and data parallelism up to eight GPUs on H100s
 with a 235B model; ten other checkpoints from 8B to 235B in four families, including a hybrid
-linear-attention mixture of experts on one 96 GB card; output quality of fp8, fp8 KV and NVFP4 against
-bf16 on gsm8k and ifeval for eleven served configurations; multi-turn traffic against round-robin and
-sticky routing; prompts to 64,000 tokens, unique and cached, on both GPUs; structured output; reasoning
-effort; repeatability across days and regions. **Not measured:** autoscaling timings on fleets other than
-6 → 8; eight engines on one g7e host (no capacity found); quality beyond two tasks.
+linear-attention mixture of experts on one 96 GB card; output quality of bf16, fp8, NVFP4, GPTQ and AWQ
+weights and of the fp8 KV cache on the standard benchmark set (MMLU, ARC, HellaSwag, Winogrande,
+TruthfulQA, GSM8K, IFEval, WikiText perplexity) across four model families; multi-turn traffic against
+round-robin and sticky routing; prompts to 64,000 tokens, unique and cached, on both GPUs; structured
+output; reasoning effort; repeatability across days and regions. **Not measured:** autoscaling timings on
+fleets other than 6 → 8; eight engines on one g7e host (no capacity found); code quality (no code task
+runs correctly for an instruct model over an API).
 
 ---
 
