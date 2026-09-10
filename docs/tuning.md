@@ -1233,9 +1233,10 @@ the kernels of 0.28.0 and no other release.
 2. **Precision second, and it is worth more than any knob.** fp8 over bf16 was +58% to +83% on both
    models, most on long prompts. A 4-bit format added +26% on short prompts and +57% on long ones over
    fp8. Weight precision is the only setting in this repository with a 2× effect; every engine knob is
-   under 30%. Throughput says nothing about answers: on one standard task fp8 scored the same as bf16
-   on both models and NVFP4 within the interval (*What quantisation costs in answers*); that is a
-   check, and your own prompts are the evaluation you owe your users before switching.
+   under 30%. Throughput says nothing about answers, so the precisions were scored on the standard
+   benchmarks across four model families (*What quantisation costs in answers*): fp8 weights and an fp8
+   cache cost nothing measurable; every 4-bit format costs 0.5 to 2 points and flips one answer in
+   twenty. That is a check, and your own prompts are the evaluation you owe your users before switching.
 3. **Know which wall you are at before you buy anything** (*Which wall are you at?*). The prefix cache
    was worth 2.7× on long prompts and nothing on the dense model's short prompts. A GPU with more
    bandwidth helps a decode-bound workload and does nothing for a prefill-bound one. The same fleet
