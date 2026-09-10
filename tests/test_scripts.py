@@ -19,7 +19,7 @@ def _load(name: str):
 def test_every_script_runs_help():
     """--help runs the module body and the argparse setup; neither needs credentials."""
     import subprocess
-    for name in ("build_image", "endpoint_info", "test_endpoint", "benchmark", "size_fleet", "quality"):
+    for name in ("build_image", "endpoint_info", "test_endpoint", "benchmark", "size_fleet", "quality", "extraction"):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, f"{name}.py"), "--help"],
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
@@ -236,3 +236,19 @@ def test_quality_summary_merges_harness_results_and_compare_counts_flipped_answe
     q.compare(str(a), str(b))
     out = capsys.readouterr().out
     assert "gsm8k" in out and "50.0%" in out, "two of four shared questions flipped: one gained, one lost"
+
+
+def test_extraction_reads_bio_tags_parses_leniently_and_scores_mentions():
+    """Entity-level scoring on (type, mention): a mention with the right text and the wrong type is both a
+    false positive and a false negative, and a fenced or chatty answer still parses."""
+    e = _load("extraction")
+    names = ["O", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC", "B-MISC", "I-MISC"]
+    gold = e.entities(["Ada", "Lovelace", "joined", "IBM", "in", "New", "York", "."], [1, 2, 0, 3, 0, 5, 6, 0], names)
+    assert gold == {"persons": ["Ada Lovelace"], "organizations": ["IBM"], "locations": ["New York"], "misc": []}
+    pred = e.parse('Sure!\n```json\n{"persons": ["Ada  Lovelace"], "organizations": ["New York"], "locations": [], "misc": []}\n```')
+    assert pred["persons"] == ["Ada Lovelace"], "whitespace inside a mention is normalised"
+    assert e.score(gold, pred) == (1, 1, 2), "one right, New York as an organisation is wrong, IBM and the location are missed"
+    assert e.parse("no json here") is None and e.score(gold, None) == (0, 0, 3)
+    b = e.body("m", "IBM hired Ada .", [("x", gold)], "schema")
+    assert b["response_format"]["json_schema"]["strict"] and b["messages"][-1]["content"] == "IBM hired Ada ." and len(b["messages"]) == 4
+    assert "response_format" not in e.body("m", "x", [], "free")
