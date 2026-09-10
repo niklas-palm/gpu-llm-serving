@@ -552,6 +552,14 @@ serving values back afterwards.
 
 ---
 
+## Symptom: `400` from `/v1/completions` with `stop` in the request
+
+The engine accepts a stop string or a list of at most four; a fifth returns `400` with a `too_long`
+validation error. lm-evaluation-harness's HumanEval task sends five, which is one reason
+`scripts/quality.py` leaves code tasks out. Trim the list at the client.
+
+---
+
 ## Symptom: an engine dies during the weight download with `429 Too Many Requests`
 
 The engine log ends in a traceback from the Hugging Face client: `HTTP status client error (429 Too
