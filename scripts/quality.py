@@ -71,6 +71,7 @@ SUITES = {
         ("gen", "gsm8k", ["--num_fewshot", "5"], 500),
         ("gen", "ifeval", [], 600),
     ],
+    "ifeval": [("gen", "ifeval", [], 600)],
     "quick": [
         ("loglik", "arc_challenge,winogrande,wikitext", [], 200),
         ("gen", "gsm8k", ["--num_fewshot", "5"], 200),
