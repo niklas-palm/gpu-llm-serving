@@ -25,7 +25,7 @@ Reading paths, if you have one job today:
   a fleet*. `scripts/benchmark.py` on one instance and `scripts/size_fleet.py` turn the measurement into
   instances and a price per million tokens.
 - **Choosing a model or a precision:** *Choosing a model to host*, then *Quantisation is two independent
-  decisions*, then *Does the cheaper precision answer worse?*; `scripts/quality.py` runs the check.
+  decisions*, then *What quantisation costs in answers*; `scripts/quality.py` runs the check.
 - **A fleet that is slower than it should be:** *Which wall are you at?*, *Interpreting your own
   measurements*, then *Watching a running fleet* and [troubleshooting.md](troubleshooting.md).
 - **A model that needs several GPUs:** *Tensor parallelism*, then *Topology*.
@@ -356,53 +356,85 @@ They interact in one direction:
 | quantised (FP8/4-bit) | **`fp8`** | +12% decode, and small weights leave ample headroom |
 | unquantised (bf16) | **`auto`** | fp8 raises memory pressure here rather than lowering it; see `gpuMemoryUtilization` |
 
-#### Does the cheaper precision answer worse? Two tasks, through the endpoint
+#### What quantisation costs in answers, on standard benchmarks
 
-Throughput says nothing about answers, so each served configuration was scored with the same harness
-through the endpoint (`scripts/quality.py`: gsm8k 5-shot and ifeval 0-shot, greedy, chat template on,
-500 gsm8k questions and all 541 ifeval prompts, 1,024-token generation cap). Standard error about ±1
-point on the 30B, ±2 on the 27B.
+Throughput says nothing about answers, so every precision was scored against its own bf16 with the
+same harness through the endpoint (`scripts/quality.py`: lm-evaluation-harness 0.4.13, the set quantised
+checkpoints are published with). Log-likelihood tasks over `/v1/completions`: MMLU 5-shot (50 per subject,
+2,850), ARC-Challenge 25-shot, HellaSwag 10-shot, Winogrande 5-shot, TruthfulQA mc2 (500 each), and
+WikiText word perplexity (60 documents). Generative tasks over chat completions, greedy, 1,024-token cap:
+GSM8K 5-shot (500) and IFEval (541). Thinking models were served with thinking off. One standard error is
+about 0.7 points on MMLU, 2 on the other tasks, 1.1 to 1.9 on GSM8K, 1.6 on IFEval. Each row below is one
+served configuration on one 96 GB GPU; deltas are against the family's bf16 row.
 
-| Served configuration | gsm8k exact match (strict) | ifeval prompt-level strict | ifeval instruction-level strict |
-|---|---|---|---|
-| 30B MoE Instruct-2507, publisher fp8, fp8 KV | 95.0% | 81.3% | 87.2% |
-| 30B MoE Instruct-2507, publisher fp8, bf16 KV | 95.4% | 81.5% | 87.2% |
-| 30B MoE Instruct-2507, bf16 weights | 95.8% | 80.2% | 86.2% |
-| 30B MoE (April release), bf16, thinking off | 90.8% | 83.2% | 88.7% |
-| 30B MoE (April release), NVIDIA NVFP4, thinking off | 91.2% | 83.6% | 88.9% |
-| 30B MoE (April release), NVIDIA NVFP4, thinking on, 1,024-token cap | 68.6% | 33.6% | 47.7% |
-| 27B dense, publisher fp8 | 72.4% | 30.9% | 44.5% |
-| 27B dense, bf16 | 70.2% | 32.2% | 45.4% |
-| 27B dense, community NVFP4 | 67.2% | 30.5% | 44.4% |
-| 32B dense, publisher fp8 | 89.6% | 31.4% | 45.5% |
-| 8B dense, publisher fp8 | 70.6% | 33.3% | 47.7% |
+**Qwen3-30B-A3B (mixture of experts, 3B active), bf16 = MMLU 81.0, ARC 68.8, HellaSwag 67.2, Winogrande 70.8, TruthfulQA 52.7, GSM8K 92.6, IFEval 83.5, perplexity 10.89**
 
-What the rows say:
+| Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
+|---|---|---|---|---|---|---|---|---|---|
+| publisher fp8, fp8 KV | −0.5 | +0.2 | +0.8 | +0.4 | +1.8 | −0.8 | −0.4 | +0.2% | 2 to 4% |
+| publisher fp8, bf16 KV | 0.0 | 0.0 | +0.4 | −0.6 | +1.9 | −0.2 | −0.6 | +0.3% | 2 to 4% |
+| NVIDIA NVFP4 (calibrated) | −0.6 | −1.2 | +0.6 | +0.4 | −2.1 | −1.2 | −1.3 | +3.4% | 5 to 6% |
+| Qwen GPTQ-Int4 | −0.8 | −2.0 | +0.6 | +0.2 | +0.5 | −1.8 | −1.3 | +3.6% | 5 to 6% |
 
-- **fp8 weights cost nothing measurable** on either model or task, and neither does the fp8 KV cache
-  (30B: 95.0 against 95.4 and 81.3 against 81.5; 27B: 72.4 against 70.2). The 2× throughput of fp8 comes
-  for free on these tasks.
-- **Who quantised matters as much as the format.** NVIDIA's calibrated NVFP4 of the 30B is lossless
-  against its own bf16 base (+0.4 and +0.4) at twice the throughput. The community NVFP4 of the dense 27B
-  costs about 3 gsm8k points against bf16, in two separate runs, and nothing on ifeval. Score the
-  checkpoint you would deploy, not the format.
-- **Check the base model of a quantised checkpoint before comparing it to anything.** The 30B NVFP4
-  build above is quantised from the April release, not from Instruct-2507; the two differ by 4 points on
-  gsm8k in bf16 before any quantisation.
-- **A thinking model needs its own evaluation settings, and the settings dominate the score.** Every
-  thinking checkpoint (27B, 32B, 8B, the April 30B) scored 30 to 37% on ifeval under a 1,024-token cap
-  because the chain of thought ate the budget; the same NVFP4 30B went from 68.6 to 91.2% on gsm8k and
-  from 33.6 to 83.6% on ifeval with thinking disabled server-side
-  (`extraArgs: --default-chat-template-kwargs '{"enable_thinking": false}'`). Comparisons across
-  precisions of one model under one setting hold; absolute numbers across models do not unless the
-  setting matches how you will serve it. A reasoning model whose answer never leaves the reasoning
-  channel within the cap returns empty content, which the harness cannot score.
-- gsm8k accuracy by prompt-length quartile drifts by under 3 points for every instruct or thinking-off
-  run (96.8 to 93.6% for the 30B fp8), so no precision here loses only on long prompts; the script prints
-  the quartiles so yours would show.
+**Qwen3-32B (dense), bf16 = MMLU 84.0, ARC 72.4, HellaSwag 74.2, Winogrande 77.4, TruthfulQA 57.4, GSM8K 94.2, IFEval 84.5, perplexity 9.37**
 
-Two tasks and 500 items is a check, not a certification: run `scripts/quality.py` on your own prompts
-before switching, and compare deployments with each other, not with published numbers.
+| Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
+|---|---|---|---|---|---|---|---|---|---|
+| publisher fp8, fp8 KV | −0.3 | 0.0 | −0.4 | +0.2 | +0.2 | −0.6 | −2.1 | +0.7% | 2 to 4% |
+| Red Hat NVFP4 (calibrated) | −1.0 | −1.4 | +0.2 | +0.6 | −1.0 | 0.0 | −2.1 | +5.3% | 4 to 6% |
+
+**Qwen3-8B (dense), bf16 = MMLU 76.8, ARC 65.8, HellaSwag 67.6, Winogrande 70.4, TruthfulQA 53.8, GSM8K 78.4, IFEval 80.8, perplexity 12.25**
+
+| Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
+|---|---|---|---|---|---|---|---|---|---|
+| publisher fp8, fp8 KV | 0.0 | +0.4 | −0.8 | +1.2 | −0.6 | −3.8 | +1.5 | +0.7% | 4% MMLU, 16% GSM8K |
+| publisher fp8, bf16 KV | −0.7 | −0.2 | −0.6 | −0.2 | 0.0 | −0.8 | +0.7 | +1.1% | 4% MMLU, 13% GSM8K |
+| bf16 weights, fp8 KV | +0.2 | +0.2 | −0.8 | +0.8 | 0.0 | +3.4 | 0.0 | +0.2% | 2% MMLU, 10% GSM8K |
+| Qwen AWQ Int4 | −0.6 | +0.4 | −0.8 | +0.6 | −0.4 | +2.0 | +0.2 | +3.7% | 7% MMLU, 16% GSM8K |
+| Red Hat NVFP4 (calibrated) | −1.7 | −0.8 | −0.4 | −0.6 | −0.2 | +1.2 | +0.5 | +3.9% | 8% MMLU, 17% GSM8K |
+
+**Qwen3-30B-A3B-Instruct-2507 (the shipped model), bf16 = MMLU 83.4, ARC 72.8, HellaSwag 70.2, Winogrande 75.0, TruthfulQA 61.8, GSM8K 93.6, IFEval 81.7, perplexity 8.86**
+
+| Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
+|---|---|---|---|---|---|---|---|---|---|
+| publisher fp8, fp8 KV | −0.5 | −0.6 | 0.0 | 0.0 | −0.9 | −0.2 | | +0.7% | 2 to 4% |
+| load-time fp8 (`quantization: fp8`), fp8 KV | −0.8 | −1.0 | −0.8 | +0.6 | −0.6 | −0.6 | +0.9 | +0.6% | 2 to 4% |
+
+What generalises across the four families:
+
+- **fp8 weights cost nothing measurable.** Every task within one standard error of bf16 on every model,
+  perplexity 0.2 to 0.7% worse, 2 to 4% of answers flipped with gains about equal to losses. Load-time
+  fp8 of the bf16 checkpoint measured the same as the publisher's fp8 build. This is the 2× throughput
+  option and it is free.
+- **The fp8 KV cache costs nothing measurable either.** Perplexity +0.2 to +0.4%, tasks within noise,
+  flips balanced; on the 30B, bf16 and fp8 caches under fp8 weights are indistinguishable on every task.
+  `fp8_e5m2` is refused by the engine on fp8 checkpoints; the e4m3 default is the only choice there.
+- **4-bit weights are the first precision with a consistent cost, and it is small and the same for every
+  format.** NVFP4, GPTQ-Int4 and AWQ all land 0.5 to 2 points below bf16 on MMLU, ARC, GSM8K and IFEval,
+  3.4 to 5.3% worse in perplexity, and flip 5 to 8% of answers with losses outnumbering gains by about
+  four to three. NVIDIA's and Red Hat's calibrated NVFP4 and Qwen's GPTQ and AWQ are indistinguishable
+  from each other on quality; the difference between them is throughput (native FP4 compute on this GPU
+  against weight-only dequantisation). One earlier community NVFP4 build of a 27B cost 3 to 5 GSM8K
+  points, so the one who quantised still matters; score the checkpoint, not the format.
+- **Perplexity is the metric that separates the classes.** bf16 12.25, fp8 12.33 to 12.38, 4-bit 12.70 to
+  12.73 on the 8B, in that order on every family, while every task score overlaps its interval. Report it.
+- **The flip rate is the honest number for a fleet.** fp8 changes one answer in thirty against bf16; 4-bit
+  one in twenty; on a small model, greedy math changes one answer in six between any two configurations,
+  including two that differ only in cache precision. A ±3-point GSM8K swing on an 8B is noise.
+- **Small models are noisier, not much worse.** The 8B's 4-bit cost on MMLU (−0.6 to −1.7) is the same as
+  the 30B's and the 32B's; what grows is the variance of the generative metrics.
+- **A model release moves more than any quantisation.** The July release of the 30B beats the April
+  release in bf16 by 2 to 8 points on every task, with 8 to 11% of answers flipped. Never compare a
+  quantised build with a different release of the model.
+- **Thinking models need thinking off for these settings**, or the chain of thought eats the cap: the same
+  NVFP4 30B went from 68.6 to 91.2% on GSM8K and from 33.6 to 83.6% on IFEval with
+  `extraArgs: --default-chat-template-kwargs '{"enable_thinking": false}'`. Within-model comparisons under
+  one setting hold; absolute numbers across models do not unless the setting matches how you serve.
+
+What the check is not: 500 questions per task and 2,850 for MMLU is enough to see a precision that
+answers worse, not to certify one that does not; two tasks per aggregate are generative, and code was
+left out because no code task runs correctly for an instruct model over an API (`scripts/quality.py`
+explains). Run it on your own prompts before switching a fleet.
 
 #### Every weight option, measured
 
@@ -454,7 +486,7 @@ only on quality grounds.
 precision comparison with the fp8 rows:** the checkpoint's model card names `Qwen/Qwen3-30B-A3B`, the
 earlier hybrid thinking release, as its base, not the Instruct-2507 weights the fp8 rows use. Against
 its own base it is lossless: scored with thinking disabled, 91.2% gsm8k and 83.6% ifeval against 90.8%
-and 83.2% for the bf16 base, at twice the throughput (*Does the cheaper precision answer worse?*). The
+and 83.2% for the bf16 base, at twice the throughput (*What quantisation costs in answers*). The
 community 4-bit build of the 27B below lost 3 points on the same task, so who quantised matters as much
 as the format.
 
@@ -467,7 +499,7 @@ as the format.
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
 another ~15 GiB. On gsm8k the 27B NVFP4 build scored 3 to 5 points below its bf16 original in two runs
-(*Does the cheaper precision answer worse?*), so FP8 stays the default. To use a 4-bit build, set `modelId`
+(*What quantisation costs in answers*), so FP8 stays the default. To use a 4-bit build, set `modelId`
 to the checkpoint and clear `quantization`, and check its base model first.
 
 **Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
@@ -799,7 +831,7 @@ did not move, because the first token is the first thought.
 Two consequences for a fleet: size it on output tokens per second, and set the effort per route, because a
 fleet sized for low-effort traffic serves a third of the requests when clients ask for high. A quality
 harness has to see the answer, too: with the cap below the model's chain of thought, answers never
-leave the reasoning channel and score as empty (*Does the cheaper precision answer worse?*).
+leave the reasoning channel and score as empty (*What quantisation costs in answers*).
 
 ---
 
@@ -994,7 +1026,7 @@ and cached long prompts are a wash. The one exception was a 235B mixture-of-expe
 where 4,000-token cached prompts ran 20 to 30% faster with `auto`, reproduced twice on that model and
 not on the 30B at TP=1: a property of that model and topology, not of the GPU. Decode speed per request
 did not depend on the cache precision anywhere. Quality: no measurable effect on gsm8k or ifeval
-(*Does the cheaper precision answer worse?*).
+(*What quantisation costs in answers*).
 
 **On by default here.** It is a lossy store for cached attention state; to rule that out, set
 `kvCacheDtype: auto`.
@@ -1202,7 +1234,7 @@ the kernels of 0.28.0 and no other release.
    models, most on long prompts. A 4-bit format added +26% on short prompts and +57% on long ones over
    fp8. Weight precision is the only setting in this repository with a 2× effect; every engine knob is
    under 30%. Throughput says nothing about answers: on one standard task fp8 scored the same as bf16
-   on both models and NVFP4 within the interval (*Does the cheaper precision answer worse?*); that is a
+   on both models and NVFP4 within the interval (*What quantisation costs in answers*); that is a
    check, and your own prompts are the evaluation you owe your users before switching.
 3. **Know which wall you are at before you buy anything** (*Which wall are you at?*). The prefix cache
    was worth 2.7× on long prompts and nothing on the dense model's short prompts. A GPU with more
