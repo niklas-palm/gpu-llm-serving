@@ -121,7 +121,7 @@ class ServingStack(Stack):
         # alone doubles the estimated weight size and misreads a correct configuration.
         # Stripped once, here, so a padded or non-string value cannot reach the task definition as-is:
         # `quantization: "  "` shipped `--quantization "  "` while the size estimate treated it as bf16.
-        for key in ("modelId", "quantization", "extraArgs"):
+        for key in ("modelId", "quantization", "extraArgs", "toolCallParser", "reasoningParser"):
             if cfg.get(key) is not None and not isinstance(cfg[key], str):
                 raise ConfigError(
                     f"{key} must be a string (got {type(cfg[key]).__name__}: {cfg[key]!r}).\n"
@@ -582,6 +582,14 @@ class ServingStack(Stack):
         }
         if cfg.get("quantization"):
             env["QUANTIZATION"] = cfg["quantization"]
+        # Tool calling and reasoning parsers are names from the engine's own lists, so a value that is
+        # not a bare name is a typo, not an option. The container adds the enabling flag for each one.
+        for key, var in (("toolCallParser", "TOOL_CALL_PARSER"), ("reasoningParser", "REASONING_PARSER")):
+            value = _given(cfg.get(key), "").strip()
+            if value and not re.fullmatch(r"[a-z0-9_]+", value):
+                raise ConfigError(f"{key} must be a parser name as `vllm serve --help` lists it, e.g. hermes (got {value!r}).")
+            if value:
+                env[var] = value
         # Escape hatch for engine flags this project does not model - container/serve appends these
         # verbatim to `vllm serve`. Plumbed because the docs point at it as *the* way to try an
         # unmodelled flag (data parallelism, for one) and to diagnose a reluctant engine, and without

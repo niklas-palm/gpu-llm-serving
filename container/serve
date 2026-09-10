@@ -63,6 +63,12 @@ fi
 
 [[ -n "${QUANTIZATION:-}" ]] && ARGS+=(--quantization "${QUANTIZATION}")
 
+# Tool calling: without a parser, a request that carries `tools` gets the model's tool-call text back as
+# plain content and no client library recognises it. The parser is per model family (config.yaml).
+[[ -n "${TOOL_CALL_PARSER:-}" ]] && ARGS+=(--enable-auto-tool-choice --tool-call-parser "${TOOL_CALL_PARSER}")
+# Thinking models served with thinking on: move the chain of thought into reasoning_content.
+[[ -n "${REASONING_PARSER:-}" ]] && ARGS+=(--reasoning-parser "${REASONING_PARSER}")
+
 # Escape hatch for any flag this script does not model. Keeps the container useful without a rebuild
 # every time you want to try something.
 # The variable is unset unless extraArgs is configured, and under `set -u` a pattern substitution on an

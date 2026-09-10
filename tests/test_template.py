@@ -325,6 +325,17 @@ def test_empty_extra_args_is_omitted_entirely():
     assert "EXTRA_ARGS" not in env
 
 
+def test_tool_call_and_reasoning_parsers_reach_the_container():
+    """Agent frameworks send `tools` and read tool_calls back; without the parser the engine returns the
+    call as plain text and every agent stalls on its first step. Empty means no variable at all."""
+    env = {e["Name"]: e.get("Value") for e in vllm_container(synth(toolCallParser="hermes", reasoningParser="qwen3"))["Environment"]}
+    assert env["TOOL_CALL_PARSER"] == "hermes" and env["REASONING_PARSER"] == "qwen3"
+    env = {e["Name"]: e.get("Value") for e in vllm_container(synth())["Environment"]}
+    assert "TOOL_CALL_PARSER" not in env and "REASONING_PARSER" not in env
+    with pytest.raises(ConfigError, match="toolCallParser"):
+        synth(toolCallParser="--tool-call-parser hermes")
+
+
 def _scaling(template: dict) -> tuple[list, list]:
     targets = [r["Properties"] for r in template["Resources"].values()
                if r["Type"] == "AWS::ApplicationAutoScaling::ScalableTarget"]
