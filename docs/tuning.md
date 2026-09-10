@@ -397,8 +397,15 @@ served configuration on one 96 GB GPU; deltas are against the family's bf16 row.
 
 | Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
 |---|---|---|---|---|---|---|---|---|---|
-| publisher fp8, fp8 KV | −0.5 | −0.6 | 0.0 | 0.0 | −0.9 | −0.2 | | +0.7% | 2 to 4% |
+| publisher fp8, fp8 KV | −0.5 | −0.6 | 0.0 | 0.0 | −0.9 | −0.2 | 0.0 | +0.7% | 2 to 4% |
 | load-time fp8 (`quantization: fp8`), fp8 KV | −0.8 | −1.0 | −0.8 | +0.6 | −0.6 | −0.6 | +0.9 | +0.6% | 2 to 4% |
+
+**Qwen3.8-27B (dense, thinking off), bf16 = MMLU 83.4, ARC 72.8, HellaSwag 66.4, Winogrande 79.2, TruthfulQA 52.3, GSM8K 97.4, IFEval 80.4, perplexity 8.48**
+
+| Served as | MMLU | ARC | HellaSwag | Winogrande | TruthfulQA | GSM8K | IFEval | Perplexity | Answers flipped |
+|---|---|---|---|---|---|---|---|---|---|
+| publisher fp8, fp8 KV | +0.1 | 0.0 | +0.2 | −0.6 | +0.3 | −0.6 | −0.9 | +0.4% | 2 to 4% |
+| community NVFP4 | −1.1 | +0.6 | +1.6 | +1.4 | −0.6 | 0.0 | +0.4 | +1.9% | 4 to 6% |
 
 What generalises across the four families:
 
@@ -412,10 +419,12 @@ What generalises across the four families:
 - **4-bit weights are the first precision with a consistent cost, and it is small and the same for every
   format.** NVFP4, GPTQ-Int4 and AWQ all land 0.5 to 2 points below bf16 on MMLU, ARC, GSM8K and IFEval,
   3.4 to 5.3% worse in perplexity, and flip 5 to 8% of answers with losses outnumbering gains by about
-  four to three. NVIDIA's and Red Hat's calibrated NVFP4 and Qwen's GPTQ and AWQ are indistinguishable
-  from each other on quality; the difference between them is throughput (native FP4 compute on this GPU
-  against weight-only dequantisation). One earlier community NVFP4 build of a 27B cost 3 to 5 GSM8K
-  points, so the one who quantised still matters; score the checkpoint, not the format.
+  four to three. NVIDIA's and Red Hat's calibrated NVFP4, Qwen's GPTQ and AWQ, and the community NVFP4
+  of the 27B are indistinguishable from each other on quality; the difference between them is throughput
+  (native FP4 compute on this GPU against weight-only dequantisation). The 3 to 5 GSM8K points that same
+  27B build appeared to lose in an earlier check were the thinking chain hitting the generation cap, not
+  the weights: with thinking off it is within noise on GSM8K and one point down on MMLU like every other
+  4-bit build. Score the checkpoint you would deploy, under the settings you would serve it with.
 - **Perplexity is the metric that separates the classes.** bf16 12.25, fp8 12.33 to 12.38, 4-bit 12.70 to
   12.73 on the 8B, in that order on every family, while every task score overlaps its interval. Report it.
 - **The flip rate is the honest number for a fleet.** fp8 changes one answer in thirty against bf16; 4-bit
