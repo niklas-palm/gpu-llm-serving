@@ -15,14 +15,16 @@ served configuration: weights, KV cache precision, kernels and all. Two kinds of
   through /v1/completions with echo and logprobs; they need the model's tokenizer, fetched from the
   Hub by model id, and measure the model's raw predictions with no generation involved;
 - generative tasks (the model writes an answer that is checked) go through /v1/chat/completions with
-  the chat template, greedy, a 1,024-token cap; humaneval is a code completion and goes through
-  /v1/completions without a template, because a chat API cannot continue a half-written function.
+  the chat template, greedy, a 1,024-token cap.
 
 The standard suite is the set quantised checkpoints are usually published with: arc_challenge (25-shot),
 hellaswag (10-shot), mmlu (5-shot), truthfulqa_mc2, winogrande (5-shot), gsm8k (5-shot), wikitext
-perplexity, plus ifeval (instruction following) and humaneval (code, executed). Left out: gpqa (gated on
-the Hub) and MATH (its few-shot answer format is not followed under a chat template, so exact match
-reads near zero for every model). Limits keep it to about 40 minutes on one engine; the interval at these
+perplexity, plus ifeval (instruction following). Left out after trying them: gpqa (gated on the Hub),
+MATH (its few-shot answer format is not followed under a chat template, so exact match reads near zero
+for every model), and humaneval (an instruct model given a bare function signature writes prose or a
+second definition, the stop strings cut it, and quantised builds "beat" bf16 by 3 to 12 points with
+one-directional flips; the chat form of the task cannot be run over an API because it pre-fills the
+assistant turn). A code score needs a chat-compatible task; until then, do not read precision from it. Limits keep it to about 40 minutes on one engine; the interval at these
 sizes is 1 to 2 points, enough to see a precision that answers worse, not enough to certify one that
 does not. Run the same command against two deployments and compare rows, or pass --compare to get the
 fraction of questions whose answer changed: a precision can keep the aggregate and still flip one
@@ -68,13 +70,7 @@ SUITES = {
         ("loglik", "mmlu", ["--num_fewshot", "5"], 50),       # per subject: 57 x 50
         ("gen", "gsm8k", ["--num_fewshot", "5"], 500),
         ("gen", "ifeval", [], 600),
-        ("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200),   # code completion, no chat template
     ],
-    "genfix": [   # the generative passes added after the first runs, to top them up
-        ("gen", "ifeval", [], 600),
-        ("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200),
-    ],
-    "codefix": [("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200)],
     "quick": [
         ("loglik", "arc_challenge,winogrande,wikitext", [], 200),
         ("gen", "gsm8k", ["--num_fewshot", "5"], 200),
@@ -84,7 +80,7 @@ METRICS = {   # the one number to report per task, and the key of its per-sample
     "arc_challenge": "acc_norm,none", "hellaswag": "acc_norm,none", "winogrande": "acc,none",
     "truthfulqa_mc2": "acc,none", "mmlu": "acc,none", "wikitext": "word_perplexity,none",
     "gsm8k": "exact_match,strict-match", "ifeval": "prompt_level_strict_acc,none",
-    "humaneval_stop4": "pass@1,create_test",
+
 }
 SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_norm", "hellaswag": "acc_norm"}
 
@@ -95,31 +91,11 @@ def served_model(url: str, key: str) -> str:
     return r.json()["data"][0]["id"]
 
 
-def humaneval_task(out: str) -> str:
-    """The harness's humaneval stops on five strings; the OpenAI-compatible completions API accepts four.
-    A task file that includes the shipped one and drops the last stop; returns the directory to include."""
-    import lm_eval
-    shipped = os.path.join(os.path.dirname(lm_eval.__file__), "tasks", "humaneval", "humaneval.yaml")
-    d = os.path.join(out, "tasks")
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "humaneval_stop4.yaml"), "w") as f:
-        f.write(f"include: {shipped}\ntask: humaneval_stop4\ngeneration_kwargs:\n  until:\n    - \"\\nclass\"\n"
-                f"    - \"\\ndef\"\n    - \"\\n#\"\n    - \"\\nif\"\n  max_gen_toks: 512\n  do_sample: false\n")
-    return d
-
-
 def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Namespace, model: str, out: str) -> None:
-    if "humaneval_stop4" in tasks:
-        extra = extra + ["--include_path", humaneval_task(out)]
     if kind == "loglik":
         model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.loglik_concurrency},"
                       f"max_retries=3,tokenized_requests=True,tokenizer={a.tokenizer or model},max_length=8192")
         cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args]
-    elif kind == "complete":
-        model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.concurrency},"
-                      f"max_retries=3,tokenized_requests=False")
-        cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args,
-               "--gen_kwargs", "temperature=0,max_gen_toks=512"]
     else:
         model_args = (f"model={model},base_url={a.url}/v1/chat/completions,num_concurrent={a.concurrency},"
                       f"max_retries=3,tokenized_requests=False")
@@ -128,7 +104,7 @@ def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Nam
     cmd += ["--tasks", tasks, "--limit", str(limit), "--log_samples", "--output_path", f"{out}/{kind}-{tasks.split(',')[0]}",
             "--seed", "1234"] + extra
     print(f"\n[{time.strftime('%H:%M:%S')}] {kind}: {tasks} (limit {limit})", flush=True)
-    r = subprocess.run(cmd, env={**os.environ, "OPENAI_API_KEY": a.key, "HF_ALLOW_CODE_EVAL": "1"})
+    r = subprocess.run(cmd, env={**os.environ, "OPENAI_API_KEY": a.key})
     if r.returncode:
         print(f"  harness failed for {tasks} (exit {r.returncode}); continuing", file=sys.stderr)
 
