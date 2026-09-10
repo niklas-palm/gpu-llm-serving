@@ -20,8 +20,9 @@ served configuration: weights, KV cache precision, kernels and all. Two kinds of
 
 The standard suite is the set quantised checkpoints are usually published with: arc_challenge (25-shot),
 hellaswag (10-shot), mmlu (5-shot), truthfulqa_mc2, winogrande (5-shot), gsm8k (5-shot), wikitext
-perplexity, plus ifeval (instruction following), humaneval (code, executed) and MATH (competition
-mathematics, chain of thought; gpqa is gated on the Hub and left out). Limits keep it to about 40 minutes on one engine; the interval at these
+perplexity, plus ifeval (instruction following) and humaneval (code, executed). Left out: gpqa (gated on
+the Hub) and MATH (its few-shot answer format is not followed under a chat template, so exact match
+reads near zero for every model). Limits keep it to about 40 minutes on one engine; the interval at these
 sizes is 1 to 2 points, enough to see a precision that answers worse, not enough to certify one that
 does not. Run the same command against two deployments and compare rows, or pass --compare to get the
 fraction of questions whose answer changed: a precision can keep the aggregate and still flip one
@@ -67,15 +68,13 @@ SUITES = {
         ("loglik", "mmlu", ["--num_fewshot", "5"], 50),       # per subject: 57 x 50
         ("gen", "gsm8k", ["--num_fewshot", "5"], 500),
         ("gen", "ifeval", [], 600),
-        ("complete", "humaneval", ["--confirm_run_unsafe_code"], 200),   # code completion, no chat template
-        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),           # MATH, chain of thought, 4-shot
+        ("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200),   # code completion, no chat template
     ],
     "genfix": [   # the generative passes added after the first runs, to top them up
         ("gen", "ifeval", [], 600),
-        ("complete", "humaneval", ["--confirm_run_unsafe_code"], 200),
-        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),
+        ("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200),
     ],
-    "codefix": [("complete", "humaneval", ["--confirm_run_unsafe_code"], 200)],
+    "codefix": [("complete", "humaneval_stop4", ["--confirm_run_unsafe_code"], 200)],
     "quick": [
         ("loglik", "arc_challenge,winogrande,wikitext", [], 200),
         ("gen", "gsm8k", ["--num_fewshot", "5"], 200),
@@ -85,7 +84,7 @@ METRICS = {   # the one number to report per task, and the key of its per-sample
     "arc_challenge": "acc_norm,none", "hellaswag": "acc_norm,none", "winogrande": "acc,none",
     "truthfulqa_mc2": "acc,none", "mmlu": "acc,none", "wikitext": "word_perplexity,none",
     "gsm8k": "exact_match,strict-match", "ifeval": "prompt_level_strict_acc,none",
-    "humaneval": "pass@1,create_test", "minerva_math": "exact_match,none",
+    "humaneval_stop4": "pass@1,create_test",
 }
 SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_norm", "hellaswag": "acc_norm"}
 
@@ -96,7 +95,22 @@ def served_model(url: str, key: str) -> str:
     return r.json()["data"][0]["id"]
 
 
+def humaneval_task(out: str) -> str:
+    """The harness's humaneval stops on five strings; the OpenAI-compatible completions API accepts four.
+    A task file that includes the shipped one and drops the last stop; returns the directory to include."""
+    import lm_eval
+    shipped = os.path.join(os.path.dirname(lm_eval.__file__), "tasks", "humaneval", "humaneval.yaml")
+    d = os.path.join(out, "tasks")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "humaneval_stop4.yaml"), "w") as f:
+        f.write(f"include: {shipped}\ntask: humaneval_stop4\ngeneration_kwargs:\n  until:\n    - \"\\nclass\"\n"
+                f"    - \"\\ndef\"\n    - \"\\n#\"\n    - \"\\nif\"\n  max_gen_toks: 512\n  do_sample: false\n")
+    return d
+
+
 def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Namespace, model: str, out: str) -> None:
+    if "humaneval_stop4" in tasks:
+        extra = extra + ["--include_path", humaneval_task(out)]
     if kind == "loglik":
         model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.loglik_concurrency},"
                       f"max_retries=3,tokenized_requests=True,tokenizer={a.tokenizer or model},max_length=8192")
