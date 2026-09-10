@@ -94,8 +94,10 @@ def served_model(url: str, key: str) -> str:
 
 def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Namespace, model: str, out: str) -> None:
     if kind == "loglik":
+        tok = ("tokenized_requests=False" if a.text_prompts
+               else f"tokenized_requests=True,tokenizer={a.tokenizer or model}")
         model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.loglik_concurrency},"
-                      f"max_retries=3,tokenized_requests=True,tokenizer={a.tokenizer or model},max_length=8192")
+                      f"max_retries=3,{tok},max_length=8192")
         cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args]
     else:
         model_args = (f"model={model},base_url={a.url}/v1/chat/completions,num_concurrent={a.concurrency},"
@@ -187,6 +189,9 @@ def main() -> int:
     ap.add_argument("--key", required=True, help="the ApiKeyValue stack output")
     ap.add_argument("--suite", default="standard", choices=sorted(SUITES), help="which task set")
     ap.add_argument("--tokenizer", default="", help="tokenizer id for log-likelihood tasks; default the served model id")
+    ap.add_argument("--text-prompts", action="store_true",
+                    help="send text instead of token ids for log-likelihood tasks: for models whose Hub tokenizer "
+                         "does not match the engine's (Mistral tekken tokenizers), or that have no Hub tokenizer")
     ap.add_argument("--concurrency", type=int, default=16, help="generative requests in flight")
     ap.add_argument("--loglik-concurrency", type=int, default=4,
                     help="log-likelihood requests in flight; each holds vocabulary x prompt logits on the GPU")
