@@ -15,7 +15,8 @@ served configuration: weights, KV cache precision, kernels and all. Two kinds of
   through /v1/completions with echo and logprobs; they need the model's tokenizer, fetched from the
   Hub by model id, and measure the model's raw predictions with no generation involved;
 - generative tasks (the model writes an answer that is checked) go through /v1/chat/completions with
-  the chat template, greedy, a 1,024-token cap.
+  the chat template, greedy, a 1,024-token cap; humaneval is a code completion and goes through
+  /v1/completions without a template, because a chat API cannot continue a half-written function.
 
 The standard suite is the set quantised checkpoints are usually published with: arc_challenge (25-shot),
 hellaswag (10-shot), mmlu (5-shot), truthfulqa_mc2, winogrande (5-shot), gsm8k (5-shot), wikitext
@@ -65,13 +66,16 @@ SUITES = {
         ("loglik", "wikitext", [], 60),
         ("loglik", "mmlu", ["--num_fewshot", "5"], 50),       # per subject: 57 x 50
         ("gen", "gsm8k", ["--num_fewshot", "5"], 500),
-        ("gen", "ifeval,humaneval_instruct", ["--confirm_run_unsafe_code"], 600),
-        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),      # MATH, chain of thought, 4-shot
+        ("gen", "ifeval", [], 600),
+        ("complete", "humaneval", ["--confirm_run_unsafe_code"], 200),   # code completion, no chat template
+        ("gen", "minerva_math", ["--num_fewshot", "4"], 200),           # MATH, chain of thought, 4-shot
     ],
-    "genfix": [   # the last two passes alone, to top up a run made before they existed
-        ("gen", "ifeval,humaneval_instruct", ["--confirm_run_unsafe_code"], 600),
+    "genfix": [   # the generative passes added after the first runs, to top them up
+        ("gen", "ifeval", [], 600),
+        ("complete", "humaneval", ["--confirm_run_unsafe_code"], 200),
         ("gen", "minerva_math", ["--num_fewshot", "4"], 200),
     ],
+    "codefix": [("complete", "humaneval", ["--confirm_run_unsafe_code"], 200)],
     "quick": [
         ("loglik", "arc_challenge,winogrande,wikitext", [], 200),
         ("gen", "gsm8k", ["--num_fewshot", "5"], 200),
@@ -81,7 +85,7 @@ METRICS = {   # the one number to report per task, and the key of its per-sample
     "arc_challenge": "acc_norm,none", "hellaswag": "acc_norm,none", "winogrande": "acc,none",
     "truthfulqa_mc2": "acc,none", "mmlu": "acc,none", "wikitext": "word_perplexity,none",
     "gsm8k": "exact_match,strict-match", "ifeval": "prompt_level_strict_acc,none",
-    "humaneval_instruct": "pass@1,create_test", "minerva_math": "exact_match,none",
+    "humaneval": "pass@1,create_test", "minerva_math": "exact_match,none",
 }
 SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_norm", "hellaswag": "acc_norm"}
 
@@ -97,6 +101,11 @@ def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Nam
         model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.loglik_concurrency},"
                       f"max_retries=3,tokenized_requests=True,tokenizer={a.tokenizer or model},max_length=8192")
         cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args]
+    elif kind == "complete":
+        model_args = (f"model={model},base_url={a.url}/v1/completions,num_concurrent={a.concurrency},"
+                      f"max_retries=3,tokenized_requests=False")
+        cmd = ["lm_eval", "--model", "local-completions", "--model_args", model_args,
+               "--gen_kwargs", "temperature=0,max_gen_toks=512"]
     else:
         model_args = (f"model={model},base_url={a.url}/v1/chat/completions,num_concurrent={a.concurrency},"
                       f"max_retries=3,tokenized_requests=False")
@@ -152,10 +161,11 @@ def samples(out: str, task: str) -> dict:
     key = SAMPLE_SCORE.get(task)
     scores: dict = {}
     for path in glob.glob(f"{out}/**/samples_{task}_*.jsonl", recursive=True):
+        subject = os.path.basename(path).rsplit("_", 1)[0]      # mmlu writes one file per subject
         for line in open(path):
             d = json.loads(line)
             if key and d.get("filter", "strict-match") in ("strict-match", "none") and key in d:
-                scores[d["doc_id"]] = float(d[key])
+                scores[(subject, d["doc_id"])] = float(d[key])
     return scores
 
 
