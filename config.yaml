@@ -75,12 +75,13 @@ maxInstanceCount: 24
 # RequestCountPerTarget, a leading indicator.
 #
 # Expect to change this. Request rate scales inversely with prompt length while tokens/s per GPU stays
-# roughly constant (17.1 req/s per GPU at 1,000 tokens, 4.2 at 4,000). Derivation:
-#   one GPU sustains ~15,500 input tok/s inside an 8 s p95
+# roughly constant (17.2 req/s per GPU at 1,000 tokens, 4.2 at 4,000). Derivation:
+#   one GPU sustains ~16,000 input tok/s inside an 8 s p95
 #   / your average input tokens per request  -> req/s per task
 #   x 60 x 0.85                              -> threshold
-# 1,000-token prompts: 925. The mixed workload above averages ~1,780 tokens: 15,500 / 1,780 = 8.7,
-# x 60 x 0.85 = 445. Split the fleet by shape and the thresholds are ~925 and ~330.
+# 1,000-token prompts: ~870. The mixed workload above averages ~1,780 tokens: 16,000 / 1,780 = 9.0,
+# x 60 x 0.85 = 460; the shipped 445 is the same sum from the 15,500 tok/s measured the day it was set.
+# Split the fleet by shape and the thresholds are ~870 and ~315.
 #
 # Blind spot: request count ignores request cost. A hundred short and a hundred long requests look
 # the same here.
@@ -226,7 +227,7 @@ tuning:
   maxNumBatchedTokens: 0
 
   # Fraction of each GPU vLLM may claim. 0.95 measured +27% over the 0.90 default (the KV cache is
-  # what remains after the weights). 0.97 gained ~0% and crashed a dense model under load.
+  # what remains after the weights). 0.97 gained +1.6% and crashed a dense model under load.
   # Leave at 0.95 with unquantised weights too; the fix for that case is kvCacheDtype: auto.
   # docs/tuning.md, "gpuMemoryUtilization: 0.95".
   gpuMemoryUtilization: 0.95
@@ -237,7 +238,7 @@ tuning:
   # On H100s (FlashAttention) the same shape ran 20 to 30% faster with "auto". Kernel-dependent, so
   # measure it on yours. docs/tuning.md, "kvCacheDtype".
   # With unquantised weights use "auto": fp8 packs more tokens in, batches grow, and it runs out of
-  # VRAM under load. `cdk synth` warns on the combination.
+  # VRAM under load. `cdk synth` warns when the weights fill more than half the card.
   kvCacheDtype: fp8
 
   # Reuse attention state across requests sharing a prompt prefix. Leave on: -1.2% when nothing

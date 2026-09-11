@@ -1,14 +1,14 @@
 # Measurements
 
 The rows behind the numbers in [docs/tuning.md](../docs/tuning.md), as data. One file for throughput
-and latency, one for output quality. Every row carries the conditions it was measured under, so a
+and latency, one for output quality, one for agentic quality. Every row carries the conditions it was measured under, so a
 number can be compared with another only when those columns match.
 
 | File | One row is | Rows |
 |---|---|---|
-| `benchmarks.csv` | one concurrency level of one benchmark run: hardware, engines, model, weights, KV precision, topology, flags, kernels, prompt shape, cache state, and the results (req/s, tokens/s, p50/p95/p99, time to first token where streamed, decode speed per request) | 780+ |
-| `quality.csv` | one metric of one evaluation of one served configuration: family, model, weights, KV precision, thinking setting, task, setting, score, standard error | 180+ |
-| `agentic.csv` | one metric of one agentic benchmark on one served configuration: family, model, weights, KV precision, engines, benchmark, metric, value, n, harness | 240+ |
+| `benchmarks.csv` | one concurrency level of one benchmark run: hardware, engines, model, weights, KV precision, topology, flags, kernels, prompt shape, cache state, and the results (req/s, tokens/s, p50/p95/p99, time to first token where streamed, decode speed per request) | 1,200+ |
+| `quality.csv` | one metric of one evaluation of one served configuration: family, model, weights, KV precision, thinking setting, task, setting, score, standard error | 240+ |
+| `agentic.csv` | one metric of one agentic benchmark on one served configuration: family, model, weights, KV precision, engines, benchmark, metric, value, n, harness | 270+ |
 
 All rows so far are vLLM 0.28.0 in this project's container, measured through the CloudFront endpoint
 from an in-region client with `scripts/benchmark.py` (60 to 120 s per level after warm-up) and

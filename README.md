@@ -4,7 +4,7 @@ Deploy an open-weight LLM with [vLLM](https://github.com/vllm-project/vllm) on A
 a load balancer, with an OpenAI-compatible API.
 
 Any model vLLM serves: `modelId` is a Hugging Face repo id, and the stack derives the GPUs per engine
-from the model's size. It has served twelve models from 8B to 235B, dense, mixture-of-experts and
+from the model's size. It has served eleven models from 8B to 235B, dense, mixture-of-experts and
 hybrid, in bf16, fp8 and four 4-bit formats, on one GPU and on eight; the table in [Configure](#configure)
 lists them with the one or two settings each needed beyond `modelId`. The shipped default is one of
 them, chosen because it fits one GPU with room for a large cache.
@@ -26,7 +26,7 @@ The defaults come from measurements on this hardware; [docs/tuning.md](docs/tuni
 [docs/troubleshooting.md](docs/troubleshooting.md) is organised by symptom.
 
 **What it costs:** one `g7e.2xlarge` is about $3.30/hour on-demand, the shipped 16 about $53/hour;
-idle at zero instances about $50/month. Details and how to stop paying: [Operating](#operating).
+idle at zero instances about $60/month. Details and how to stop paying: [Operating](#operating).
 
 ---
 
@@ -36,7 +36,8 @@ The default fleet is **16 `g7e.2xlarge`**, autoscaling to 24: 128 vCPU at the mi
 ceiling. Request the G-instance quota for that before deploying (see [Check your quota](#check-your-quota));
 a fresh account rarely has it. With less quota, lower `instanceCount` and `maxInstanceCount` in
 `config.local.yaml` to what fits, and raise them later. For a first deployment, set `useSpot: true` there
-too: on-demand g7e.2xlarge had no capacity in two regions on the same day while spot launched in a minute.
+too: on-demand g7e.2xlarge had no capacity in several regions on the same afternoon while spot launched in
+a minute more often than not.
 
 ```bash
 pip install -r requirements.txt && npm install -g aws-cdk
@@ -195,7 +196,7 @@ measured default. Sizes are the checkpoint's, GPUs are per engine:
 | `Qwen/Qwen3.8-27B` | dense, thinking | 1 | bf16, fp8, NVFP4 | as above |
 | `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | dense | 1 | bf16, fp8, NVFP4 (Red Hat builds) | `extraArgs: --tokenizer-mode mistral --config-format mistral --load-format mistral` for the official checkpoint; the NVFP4 build also needs `--limit-mm-per-prompt '{"image": 0}'`; `toolCallParser: mistral` |
 | `Qwen/Qwen3-Next-80B-A3B-Instruct-FP8` | hybrid linear-attention MoE | 1 | fp8 | `maxModelLen: 32768` on a 96 GB card; its MTP head is one line in `extraArgs` (*Speculative decoding with EAGLE-3* in docs/tuning.md) |
-| `openai/gpt-oss-120b` | MoE, MXFP4 | 1 | MXFP4 (the only build) | `toolCallParser: openai`, `reasoningParser: openai_gptoss`, `kvCacheDtype: auto`; `estimatedParamsBillions: 32` so the fit check, which assumes 16-bit weights, sees its 63 GB |
+| `openai/gpt-oss-120b` | MoE, MXFP4 | 1 | MXFP4 (the only build) | `toolCallParser: openai`, `reasoningParser: openai_gptoss`, `kvCacheDtype: auto`; `estimatedParamsBillions: 120` |
 | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | hybrid MoE, NVFP4 | 1 | NVFP4 | `extraEnv: {VLLM_USE_FLASHINFER_MOE_FP4: "0", VLLM_NVFP4_GEMM_BACKEND: marlin}` and `gpuMemoryUtilization: 0.90` for a stable start |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507` | MoE, 22B active | 4 or 8 (H100) | publisher fp8 (block-quantised), bf16 | fp8: `tensorParallel: 4` and two engines per host, or 8 with `enableExpertParallel` (block-quantised weights refuse TP=8 without it); bf16: TP=8 with `maxModelLen: 32768` |
 
@@ -323,7 +324,7 @@ with an IP set to the distribution (`web_acl_id` on the `Distribution` in `infra
 Not included: it is a cost and a policy decision.
 
 **What it costs**: roughly $0.01 per 10,000 requests plus $0.085/GB out. At 100 requests/second
-sustained, about $280/month, around 2% of the GPU fleet. VPC origins are free.
+sustained, about $280/month, under 1% of the shipped fleet. VPC origins are free.
 
 ### Before you change the tuning block
 
@@ -338,7 +339,7 @@ and a lower usable load (64 concurrent per GPU against 128). Use a publisher's o
 
 **If you leave the weights unquantised, set `kvCacheDtype: auto`.** fp8 cache with bf16 weights runs out
 of VRAM under load, and the lower utilisation that survives it is slower than not doing it at all.
-`cdk synth` warns on the combination.
+`cdk synth` warns when the weights fill more than half the card.
 
 Instance choice, topology, operating concurrency, and what *not* to bother with:
 [docs/tuning.md](docs/tuning.md).
@@ -629,7 +630,7 @@ instances?*). Alarms:
 notify an SNS topic. Set `latencyAlarmSeconds` for a third, `<stack>-too-slow`, on p95; it has no
 default because "too slow" depends on the caller.
 
-Top rows come from the load balancer and Auto Scaling group. The bottom row comes from inside the
+Top rows come from the load balancer and Auto Scaling group. The bottom three rows come from inside the
 engines: a sidecar in every task scrapes vLLM's metrics and publishes queue depth, KV cache usage,
 preemptions, time to first token, request sizes by band and the prefix cache hit rate, which say *why*
 a fleet is slow and what shape of traffic it is serving. The band edges are `promptTokenBands` and
@@ -643,8 +644,8 @@ never returns "busy").
 **While serving**, GPU instances dominate. Spot is typically 40–70% cheaper than on-demand.
 
 **While idle**, with the GPU count at zero: load balancer (~$16–20/month), NAT gateway (~$32/month plus
-data), storage for the image, and about $1.20/month for the four engine metrics
-(custom metrics are billed per name, not per task).
+data), storage for the image, and about $7.50/month for the ten engine metrics plus one series per
+band edge (custom metrics are billed per name, not per task).
 
 **Autoscaling does not reliably reduce this**: a fleet that grew during a spike shrinks over 45–60
 minutes (see [Notes](#notes-and-limitations)). To stop paying, scale to zero.
@@ -826,8 +827,8 @@ would otherwise take a 20-minute deployment to surface.
   per-caller identity, rotation or revocation. Keeps unauthenticated traffic off the model; not
   sufficient for sensitive data. See [that section](#if-you-need-auth-that-holds-a-real-secret).
 - **The key is generated once and persisted to `config.local.yaml`** on first deploy, so redeploys
-  reuse it. Set `apiKey` there to control it. It is *not* generated during synth, which runs on every
-  deploy and would rotate the key each time.
+  reuse it. Set `apiKey` there to control it. It is generated during the first synth and persisted, so
+  the synth that runs on every later deploy reuses it rather than rotating it.
 - **Autoscaling is ON in the shipped config** (`instanceCount: 16`, `maxInstanceCount: 24`) and is
   **slower than you expect** (measured on a 6 → 8 fleet). Set `maxInstanceCount` equal to `instanceCount` for a
   fixed-size fleet. Scale-out took **~11 minutes** to usable capacity (metric lag, a 3-datapoint alarm,

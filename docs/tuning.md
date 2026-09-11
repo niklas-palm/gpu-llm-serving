@@ -208,7 +208,7 @@ One engine, pinned to a subset of one instance's CPUs with `taskset`; only CPU c
 | 8 | 29,888 | 46,645 | 15,886 | 22,549 |
 | 4 | 29,691 | **32,455** | 15,969 | 21,691 |
 
-The 21,665 in the first row is also the TP=2 figure in *How to spend two GPUs*; the two runs were
+The 21,665 in the first row is also the TP=2 figure in *Measured results, and what they imply*; the two runs were
 consecutive and the coincidence has not been re-measured. Read the CPU rows against each other, not
 against other tables.
 
@@ -608,9 +608,11 @@ only on quality grounds.
 precision comparison with the fp8 rows:** the checkpoint's model card names `Qwen/Qwen3-30B-A3B`, the
 earlier hybrid thinking release, as its base, not the Instruct-2507 weights the fp8 rows use. Against
 its own base it is lossless: scored with thinking disabled, 91.2% gsm8k and 83.6% ifeval against 90.8%
-and 83.2% for the bf16 base, at twice the throughput (*What quantisation costs in answers*). The
-community 4-bit build of the 27B below lost 3 points on the same task, so who quantised matters as much
-as the format.
+and 83.2% for the bf16 base, at twice the throughput (*What quantisation costs in answers*). On the
+full suite every 4-bit build measured, calibrated or not, costs 0.5 to 2 points and about one point of
+tool-calling accuracy against its own bf16; one uncalibrated community build was broken for tool use
+while passing the chat tasks (*What quantisation costs an agent*). Who quantised matters as much as
+the format.
 
 | Concurrency | FP8 input tok/s | NVFP4 | Gain | p95 FP8 | p95 NVFP4 |
 |---|---|---|---|---|---|
@@ -620,9 +622,10 @@ as the format.
 
 p99 spiked in two of the five levels (8.2 s at 256, 9.6 s at 768) where FP8 did not; a 60-second level
 is too short to say whether that is noise. Weights are half the size of FP8 again, so the KV cache gets
-another ~15 GiB. On gsm8k the 27B NVFP4 build scored 3 to 5 points below its bf16 original in two runs
-(*What quantisation costs in answers*), so FP8 stays the default. To use a 4-bit build, set `modelId`
-to the checkpoint and clear `quantization`, and check its base model first.
+another ~15 GiB. FP8 stays the default because it costs nothing measurable in answers and 4-bit costs a
+little on every task (*What quantisation costs in answers*). To use a 4-bit build, set `modelId` to the
+checkpoint and clear `quantization`, check its base model first, and score its tool use if agents will
+call it.
 
 **Online NVFP4 does not run on this GPU.** vLLM 0.28 also has `quantization: nvfp4_per_token`, which
 quantises bf16 weights at load time the way `fp8` does. On g7e the engine refuses to start:
@@ -1696,14 +1699,15 @@ It is the **requests per minute, per task**, at which capacity is added. Derivat
 ```
 one g7e.2xlarge sustained ~17 requests/sec inside an 8 s p95 budget   (1,000-token prompts)
 17 × 60                = 1,020 requests/minute per task at saturation
-1,020 × 0.9            ≈ 925                                          <- for 1,000-token prompts
+1,020 × 0.85           ≈ 870                                          <- for 1,000-token prompts
 ```
 
-The **shipped default is 445, not 925**: the example workload it is sized for mixes two request shapes with a
-request-weighted average input of ~1,780 tokens rather than 1,000. `15,500 / 1,780 = 8.7` req/s per
-task, x60 x0.85 = 445. Longer prompts mean fewer requests carrying the same tokens, so the threshold
-comes down (next section). Split into one fleet per shape and the thresholds become ~925 and ~330; a
-blended threshold serves neither shape well.
+The **shipped default is 445, not 870**: the example workload it is sized for mixes two request shapes with a
+request-weighted average input of ~1,780 tokens rather than 1,000. `16,000 / 1,780 = 9.0` req/s per
+task, x60 x0.85 = 460; the shipped 445 comes from the 15,500 tok/s measured the day it was set, and
+either is fine. Longer prompts mean fewer requests carrying the same tokens, so the threshold comes
+down (next section). Split into one fleet per shape and the thresholds become ~870 and ~315; a blended
+threshold serves neither shape well.
 
 The 0.9 is the margin, and 90% is *late* given the ~11 minutes scale-out takes; to grow sooner, lower
 the multiplier, not the measured rate.
@@ -1748,14 +1752,14 @@ Measured on identical hardware:
 
 | Prompt size | Input tok/s per GPU | Requests/sec per GPU | Correct threshold |
 |---|---|---|---|
-| 1,000 tokens | 16,075 | 17.1 | **~925/min** |
+| 1,000 tokens | 16,075 | 17.2 | **~870/min** |
 | 4,000 tokens | 15,277 | 4.2 | **~225/min** |
 
 Same GPU work in both rows, packaged into a quarter as many requests, so the request threshold comes
 down by the same factor.
 
-**Quadruple your prompt size and keep 925:** the task saturates at 4.2 requests/sec, 252/minute, so
-925 is **3.7× higher than the task can ever reach**. The alarm never fires, the fleet never grows, and
+**Quadruple your prompt size and keep 870:** the task saturates at 4.2 requests/sec, 252/minute, so
+870 is **3.5× higher than the task can ever reach**. The alarm never fires, the fleet never grows, and
 there is no error.
 
 Rule of thumb without re-measuring: scale the threshold by `1,000 ÷ your average prompt tokens`.
@@ -1837,8 +1841,8 @@ Every deployment gets one CloudWatch dashboard and two alarms (a third, on laten
 slow means). Nothing to switch on: the URL is a stack output (`DashboardUrl`) and
 `python3 scripts/endpoint_info.py` prints it next to the endpoint and the key.
 
-The top rows use metrics the load balancer and the Auto Scaling group already publish. The bottom row
-comes from inside the engines through a sidecar (*Engine metrics* below).
+The top rows use metrics the load balancer and the Auto Scaling group already publish. The bottom three
+rows come from inside the engines through a sidecar (*Engine metrics* below).
 
 Widgets are titled as questions:
 
@@ -1871,8 +1875,8 @@ looks like a working notification and is not one.
 ### Engine metrics: what the load balancer cannot see
 
 The numbers that say *why* the fleet is slow are on vLLM's Prometheus endpoint at `/metrics`. A
-sidecar in every task scrapes eight of them over localhost and writes them to CloudWatch under the
-namespace `<stack>/Engine`, the bottom two rows of the dashboard. Nothing to enable.
+sidecar in every task scrapes ten of them over localhost and writes them to CloudWatch under the
+namespace `<stack>/Engine`, the bottom three rows of the dashboard. Nothing to enable.
 
 | Metric | Widget | What a bad reading means |
 |---|---|---|

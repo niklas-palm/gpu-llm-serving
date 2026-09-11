@@ -5,7 +5,8 @@ Humans: start with `README.md`.
 
 ## Project
 
-One CDK stack that serves an open-weight LLM with vLLM on ECS GPU instances (g7e), behind an internal
+One CDK stack that serves an open-weight LLM with vLLM on ECS GPU instances (g7e, plus p5 for comparison
+runs), behind an internal
 ALB and CloudFront, with an OpenAI-compatible API and a Bearer key. One config file. It is built around
 vLLM on purpose (entrypoint flags, tuning keys, engine metrics on the dashboard); do not generalise it
 to other engines. The docs carry as much value as the code: every number in them was measured on this
@@ -161,7 +162,7 @@ Walk them through this order and check each step before the next.
    `benchmark.py` with their prompt shape if they need capacity numbers; set `maxInstanceCount` equal to
    `instanceCount` first so autoscaling does not move under the measurement.
 6. **Read the dashboard with them.** `DashboardUrl` output. Top rows are the load balancer's view,
-   bottom row is the engine's: waiting requests mean saturation, KV cache near 100% means preemption
+   bottom three rows are the engine's: waiting requests mean saturation, KV cache near 100% means preemption
    next, any preemptions mean lost work. Alarms fire only on sustained conditions.
 7. **Leaving.** Park with both counts at 0 and deploy; instances are gone in about five minutes, and in
    a quota-bound region the next deploy must wait until they are, because spot requests hold quota until
