@@ -226,7 +226,7 @@ decoding with EAGLE-3* in [docs/tuning.md](docs/tuning.md).
 |---|---|---|
 | anything but a plain chat client will call it (an agent framework, a coding agent, your own tool-calling harness) | `toolCallParser` to the model family's parser (`hermes` for Qwen3, `qwen3_coder`, `openai` for gpt-oss, `llama3_json`, `mistral`) | without it a request with `tools` gets the tool call back as text and the agent stalls silently (*Tool calling*) |
 | the model thinks (Qwen3 thinking builds, gpt-oss) | thinking off through `extraArgs: --default-chat-template-kwargs '{"enable_thinking": false}'`, or `reasoningParser` when you want the chain of thought separated from the answer | the chain of thought is the capacity setting: 1.7 to 3.5 times the tokens per answer, and it eats every answer cap (*Reasoning models*) |
-| traffic is multi-turn conversations and each client keeps its own cookies | `stickySessions: true` | the prefix cache is per engine; round robin hit it 21% of the time on eight engines, stickiness 75% (*Prefix caching is a routing decision*). Leave it off behind a gateway |
+| traffic is multi-turn conversations and each client keeps its own cookies | `stickySessions: true` | the prefix cache is per engine; round robin hit it 21% of the time on eight engines, stickiness 75% (*Prefix caching is a routing decision*). Leave it off behind a gateway: the cookie pins a client's cookie jar, and a gateway is one client, so it would pin all traffic to one engine unless it replays the cookie per end-user session |
 
 `AGENTS.md` turns these into the questions to ask before deploying for someone else.
 
