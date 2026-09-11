@@ -552,6 +552,24 @@ serving values back afterwards.
 
 ---
 
+## Symptom: the request carries `tools`, and the answer is text that looks like a tool call
+
+The model wrote its tool call in its own text format and nothing turned it into the `tool_calls` field,
+so the client sees `content` such as `<tool_call>{"name": ...}</tool_call>` and the agent stalls on its
+first step. **Cause:** no tool parser configured; the engine only parses tool calls when told which
+format to expect. **Fix:** set `toolCallParser` in `config.yaml` to the model family's parser (`hermes`
+for Qwen3, `qwen3_coder` for Qwen3-Coder, `openai` for gpt-oss; `vllm serve --help` lists them) and
+redeploy. A wrong parser for the family fails the same way, silently. docs/tuning.md, *Tool calling*.
+
+## Symptom: an agent's steps fail with `504 Gateway Timeout` from CloudFront, and retries never succeed
+
+The step's request took longer than 120 s, the endpoint's limit for a non-streamed answer, so CloudFront
+gave up on the origin while the engine was still generating. A coding agent's step carries its whole
+trajectory, tens of thousands of tokens, and on a busy engine that is over two minutes. **Fix:** stream
+the request (no limit applies), lower the load on the engine, or shorten the trajectory. Retrying the
+same request does not help: it times out the same way while the engine also finishes the abandoned one.
+docs/tuning.md, *Tool calling*.
+
 ## Symptom: `400` from `/v1/completions` with `stop` in the request
 
 The engine accepts a stop string or a list of at most four; a fifth returns `400` with a `too_long`

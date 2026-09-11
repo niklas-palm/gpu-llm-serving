@@ -720,9 +720,11 @@ linear-attention mixture of experts on one 96 GB card; output quality of bf16, f
 weights and of the fp8 KV cache on the standard benchmark set (MMLU, ARC, HellaSwag, Winogrande,
 TruthfulQA, GSM8K, IFEval, WikiText perplexity) across four model families; multi-turn traffic against
 round-robin and sticky routing; prompts to 64,000 tokens, unique and cached, on both GPUs; structured
-output; reasoning effort; repeatability across days and regions. **Not measured:** autoscaling timings on
-fleets other than 6 → 8; eight engines on one g7e host (no capacity found); code quality (no code task
-runs correctly for an instruct model over an API).
+output; reasoning effort; repeatability across days and regions; agentic quality of every precision on
+BFCL, τ-bench, SWE-bench Verified and structured extraction, with the tool parser in the loop and a
+repeated baseline for the noise floor. **Not measured:** autoscaling timings on fleets other than 6 → 8;
+eight engines on one g7e host (no capacity found); code quality of a base model over an API (the
+agentic runs score instruct models through an agent, which is the shape that works).
 
 ---
 
@@ -747,7 +749,8 @@ scripts/
   benchmark.py            concurrency sweep: req/s, tok/s, p50/p95/p99 per level; --stream for time to
                           first token and goodput, --turns for multi-turn conversations, --schema for
                           structured output, --reasoning-effort for reasoning models
-  quality.py              score the served model on gsm8k and ifeval through the endpoint (lm-eval)
+  quality.py              score the served model on the standard suite through the endpoint (lm-eval)
+  extraction.py           entity extraction into a JSON object, asked three ways (schema, json_object, free)
   size_fleet.py           one engine's measured capacity -> instances and price per million tokens
 LICENSE                   MIT-0
 docs/
@@ -756,6 +759,7 @@ docs/
 measurements/
   benchmarks.csv          every benchmark row behind the docs, with its conditions
   quality.csv             every quality score, with its settings
+  agentic.csv             every agentic benchmark score (BFCL, tau-bench, SWE-bench, extraction), with its settings
 tests/
   test_hardware.py        instance catalog, derived values, config validation
   test_template.py        properties of the synthesised template a deployment depends on

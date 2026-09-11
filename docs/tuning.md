@@ -29,6 +29,8 @@ Reading paths, if you have one job today:
 - **A fleet that is slower than it should be:** *Which wall are you at?*, *Interpreting your own
   measurements*, then *Watching a running fleet* and [troubleshooting.md](troubleshooting.md).
 - **A model that needs several GPUs:** *Tensor parallelism*, then *Topology*.
+- **Serving agents or tool calls:** *Tool calling*, *Structured output*, then *What quantisation costs an
+  agent*; `scripts/extraction.py` checks structured extraction on your own deployment.
 
 ---
 
@@ -455,6 +457,103 @@ left out because no code task runs correctly for an instruct model over an API (
 explains). Models whose tokenizer is not the Hub's (Mistral) need `--text-prompts` and lose the
 perplexity row. Run it on your own prompts before switching a fleet.
 
+#### What quantisation costs an agent, on standard agentic benchmarks
+
+The suite above scores knowledge and short answers. An agent fails differently: it emits a tool call
+with the wrong argument, loses the thread on turn six, or writes a patch that does not apply. So every
+precision was also scored on four agentic benchmarks through the endpoint, with their published
+scaffolds unchanged and the engine's tool parser in the loop:
+
+- **BFCL v4** (Berkeley Function Calling Leaderboard), the single-turn and multi-turn categories, 4,441
+  tests, graded by AST match and by final state. Tools go in the request, `tool_calls` come back, so
+  this scores the model and `toolCallParser` together, as every agent framework sees them.
+- **τ-bench** (tau2-bench), retail 114 tasks and airline 50, two trials, the agent at temperature 0 and
+  the simulated user and the judge fixed to one external model for every row. Metric pass^1.
+- **SWE-bench Verified**, the first 100 instances in dataset order, driven by mini-swe-agent (a bash
+  tool, 75 steps, 8 workers) and graded by the official harness. Metric: resolved out of 100.
+- **Extraction**, `scripts/extraction.py`: CoNLL-2003 named entities as a fixed JSON object, 1,000
+  sentences, entity-level F1. Standard data and metric, our prompt, so it compares deployments with each
+  other and nothing else.
+
+Four engines per row (two for the 30B rows), the serving defaults, no evaluation-only settings.
+Before the precision rows, the one row that decides what a difference means:
+
+**Run-to-run noise: the same bf16 30B-A3B-2507 deployment, scored twice.** BFCL 35.27 against 35.25 with
+3.2% of items flipped (+74 −67); τ-bench retail 59.6 against 60.5 with 27% of tasks flipped; SWE-bench 13
+against 13 with 12% of instances flipped (+6 −6); extraction F1 56.3 against 55.4 with 2.0% of sentences
+flipped. Agent trajectories diverge at temperature 0: one different token early and the run ends
+elsewhere. A τ-bench difference under 3 points, a SWE-bench difference under 5 tasks, or a BFCL flip rate
+near 3% is not a result.
+
+**Qwen3-Coder-30B-A3B-Instruct (mixture of experts, `toolCallParser: qwen3_coder`), bf16 = BFCL 32.8 overall (non-live 85.0, live 79.0, multi-turn 29.0, irrelevance 76.7), τ-bench retail 22.8 / airline 34.0, SWE-bench 22/100, extraction F1 69.9**
+
+| Served as | BFCL overall | multi-turn | irrelevance | τ retail | τ airline | SWE-bench | extraction F1 | Items flipped (BFCL, SWE, extraction) |
+|---|---|---|---|---|---|---|---|---|
+| publisher fp8 | −0.3 | −0.6 | −1.4 | +1.3 | +8.0 | +5 | −0.1 | 7.4% (+156 −171), 19%, 4.2% (+21 −21) |
+| community AWQ Int4 | −1.3 | −3.5 | −0.8 | +0.4 | +5.0 | +2 | −1.4 | 9.7% (+188 −242), 14%, 10.0% (+36 −64) |
+| community NVFP4, uncalibrated | −6.0 | −9.6 | −27.5 | +3.5 | 0.0 | −15 | −0.8 | 17.6% (+188 −592), 19% (+2 −17), 11.2% |
+
+**Qwen3-32B (dense, thinking off, `toolCallParser: hermes`), bf16 = BFCL 32.4 (87.4, 80.8, 25.4, 79.5), τ-bench retail 52.2 / airline 23.0, SWE-bench 5/100, extraction F1 65.2**
+
+| Served as | BFCL overall | multi-turn | irrelevance | τ retail | τ airline | SWE-bench | extraction F1 | Items flipped (BFCL, SWE, extraction) |
+|---|---|---|---|---|---|---|---|---|
+| publisher fp8 | 0.0 | +0.1 | −1.2 | −1.3 | +2.0 | +6 | 0.0 | 3.8% (+84 −84), 6%, 3.6% (+15 −21) |
+| Qwen AWQ Int4 | −0.6 | −1.3 | −2.0 | +0.9 | −1.0 | +4 | +0.3 | 6.4% (+123 −163), 6%, 5.1% (+22 −29) |
+| Red Hat NVFP4, calibrated | −0.9 | −2.1 | −0.8 | +4.8 | −2.0 | +2 | −0.5 | 6.3% (+114 −167), 4%, 6.8% (+26 −42) |
+
+**Qwen3-30B-A3B-Instruct-2507 (the shipped model, `toolCallParser: hermes`, two engines), bf16 = BFCL 35.3 (87.1, 78.1, 35.8, 80.2), τ-bench retail 59.6 / airline 34.0, SWE-bench 13/100, extraction F1 56.3**
+
+| Served as | BFCL overall | multi-turn | irrelevance | τ retail | τ airline | SWE-bench | extraction F1 | Items flipped (BFCL, SWE, extraction) |
+|---|---|---|---|---|---|---|---|---|
+| the same bf16 again (noise) | 0.0 | −0.3 | −0.1 | +0.9 | 0.0 | 0 | −0.9 | 3.2% (+74 −67), 12% (+6 −6), 2.0% |
+| publisher fp8 | +0.2 | +1.0 | −0.5 | 0.0 | +2.0 | +1 | −0.5 | 4.7% (+103 −107), 9% (+5 −4), 5.5% (+28 −27) |
+
+**gpt-oss-120b (MXFP4, the only precision published, `toolCallParser: openai`, `reasoningParser: openai_gptoss`, two engines)**:
+BFCL 36.2 overall with the best multi-turn (55.9) and irrelevance (87.1) of every model, and 0.0 on every
+parallel category: through the engine's parser it returns one tool call per message, so a test that
+expects several calls in one answer fails outright. τ-bench retail 75.4 / airline 60.0, 15 to 25 points
+above the Qwen models. SWE-bench 13/100 with 74 empty patches: it rarely submits a diff within the step
+budget. Extraction F1 50.2 at a 300-token answer cap with a quarter of the answers unparsed, 71.9 (the
+best) at 2,000: a reasoning model spends the cap on its thinking first, so every generative check needs
+the cap sized for it (*Reasoning models*). One row, no comparison: a reference point for what a larger
+open-weight model does on the same harnesses and hardware.
+
+What generalises:
+
+- **fp8 is free for agents too.** On all three families every aggregate is inside the repeat spread,
+  flips are balanced (Coder +156 −171, 32B +84 −84, 30B +103 −107), and the SWE-bench and τ-bench
+  differences are the same size as the bf16 repeat's own. The throughput case for fp8 stands
+  unchanged for tool-calling and agent workloads.
+- **4-bit costs about a point of BFCL and one to three points of multi-turn, with losses ahead of
+  gains.** AWQ and calibrated NVFP4 flip 6 to 10% of BFCL items against 3 to 4% for fp8, and the flips
+  run about four losses to three gains; extraction flips go the same way (Coder AWQ +36 −64). It is the
+  same shape as the Q&A result, and no bigger: the agent's multi-step trajectory does not amplify a
+  small per-token perturbation into a large end-to-end loss.
+- **One checkpoint was broken, and only the agentic suite showed it.** The uncalibrated community NVFP4
+  of the Coder scored within a point of bf16 on extraction and on non-live BFCL, then lost 27.5 points of
+  irrelevance detection (it calls a tool when it should answer), 9.6 of multi-turn, and 15 of 22
+  SWE-bench tasks (43 empty patches, 40 that did not apply). The same format from a calibrated
+  publisher (Red Hat's 32B) costs a point. Format is not the risk; the build is. Score a 4-bit
+  checkpoint on tool use before serving it to agents, whatever its perplexity says.
+- **Agent metrics are noisy in a way Q&A metrics are not.** Two identical deployments disagree on 12% of
+  SWE-bench instances and 27% of τ-bench tasks; these are the flip rates of *nothing*. Compare only
+  aggregates, on the same instance list, and repeat the baseline once before believing a delta.
+- **Model choice moves more than precision.** Retail τ-bench: 52 to 60 for the two Qwen3 30B and 32B
+  instruct models, 23 for the Coder; SWE-bench: 22 for the Coder, 13 for the 30B, 5 for the 32B; BFCL
+  multi-turn 36 for the 30B-2507, 29 for the Coder, 25 for the 32B. Pick the model for the job, then
+  pick the precision.
+- **Constrained decoding does not change extraction quality.** The strict schema, `json_object` and a
+  plain "answer with JSON" prompt agree within a point of F1 on every configuration (Coder 69.9, 69.7,
+  69.7; 32B 65.2, 65.2, 65.2), and the free answers all parsed. The schema buys a guaranteed shape at
+  the 15% decode cost measured in *Structured output*, not better answers.
+
+What the check is not: 100 SWE-bench instances and 164 τ-bench tasks give a standard error of about
+5 points, enough to catch a broken build, not a one-point one; τ-bench's user simulator is an external
+model, so its absolute scores depend on that choice; the extraction score is a same-prompt comparison,
+not a CoNLL result. Two SWE-bench instances were dropped from two rows (marked 98) when their steps
+exceeded the endpoint's 120 s non-streamed limit on every attempt, which is itself a finding for agent
+traffic (*Tool calling*).
+
 #### Every weight option, measured
 
 Every row **meets** the latency budget, at the highest concurrency where it does. Plan against the
@@ -854,6 +953,35 @@ leave the reasoning channel and score as empty (*What quantisation costs in answ
 
 ---
 
+## Tool calling: the parser is part of the deployment
+
+An agent framework sends `tools` with the request and reads `tool_calls` from the answer. The model
+does not produce that field; it produces text in its own tool-call format (`<tool_call>{...}</tool_call>`
+for Qwen3, an XML dialect for Qwen3-Coder, the Harmony channels of gpt-oss), and the engine needs a
+parser for that format to turn the text into the field. Without one, a request that carries `tools` gets
+the model's tool-call text back as plain `content`, no client library recognises it, and the agent stalls
+on its first step with no error anywhere. `toolCallParser` in `config.yaml` is that one flag, per model
+family: `hermes` for Qwen3 and Qwen3-30B-A3B, `qwen3_coder` for Qwen3-Coder, `openai` for gpt-oss,
+`llama3_json` for Llama 3.x, `mistral` for Mistral; `vllm serve --help` lists them all. For a thinking
+model served with thinking on, `reasoningParser` (`qwen3`, `openai_gptoss`, `deepseek_r1`) moves the chain
+of thought into `reasoning_content` so the client gets the answer; with thinking off it is not needed.
+
+Three things measured while scoring agents through this stack (*What quantisation costs an agent*):
+
+- **The parser adds nothing measurable to serving cost**, and its output was scored on 4,441 BFCL tests
+  per configuration: the engine's own parser plus the model reached 85 to 87% on single-turn function
+  calls for every 30B-class model, with the model, not the parser, deciding the rest.
+- **Agent steps are long requests.** A coding agent's step carries the whole trajectory, tens of
+  thousands of tokens, and on a busy engine a non-streamed step took over 120 s, which is the endpoint's
+  non-streamed limit (README, *Access*): the client saw `504 Gateway Timeout` from CloudFront and
+  retried forever. Agents behind this stack should stream, or the origin timeout must be raised. The
+  same load never timed out on chat-sized requests.
+- **A checkpoint can be fine for chat and broken for tools.** The uncalibrated NVFP4 Coder build above
+  scored within a point of bf16 on extraction and short function calls and lost 27 points of
+  irrelevance detection. Score tool use before serving a 4-bit build to agents.
+
+---
+
 ## Structured output costs about 15% of decode speed
 
 Tool calls and agents ask for JSON that matches a schema; the engine compiles a grammar per request and
@@ -871,6 +999,12 @@ Decode per token is 11 to 17% slower under the grammar at every level, and e2e p
 Requests per second went the other way, because a closed schema ends the answer sooner; time to first
 token fell because the first token is the mandatory brace. Size a tool-calling fleet on tokens, not on
 requests, and budget about 15% of decode for the grammar.
+
+What the grammar buys is shape, not accuracy. `scripts/extraction.py` asked three models for the same
+JSON object three ways, a strict schema, `json_object`, and a plain request for JSON, on 1,000
+CoNLL-2003 sentences: entity F1 agreed within a point in every case (69.9 / 69.7 / 69.7 for the Coder,
+65.2 / 65.2 / 65.2 for the 32B), and every free-form answer parsed. Use the schema when a malformed
+answer would break the caller; do not expect it to extract better.
 
 ---
 
@@ -1862,6 +1996,7 @@ between sections are stated where they matter; the campaigns behind them:
 | Routing and the prefix cache, decode ceilings and the memory-controller measurement, KV precision by kernel, CUDA graph mode, warm restart, dynamic speculation, dense contrast, quality | 1 and 8 × `g7e.2xlarge` | 30B MoE fp8, 27B dense, 120B MXFP4 | streamed, 1 to 128 per engine, 60 to 120 s per level |
 | Repeatability across regions and days, long prompts to 64k, KV precision by context length, structured output, the 8B and 32B dense points, the 80B hybrid MoE on one GPU and at TP=2 with its MTP head, quality on two tasks for eleven configurations | one `g7e.2xlarge` in three regions, one `p5.48xlarge` | 30B MoE, 8B, 27B, 32B dense, 80B hybrid MoE, 120B MXFP4 | streamed, 90 s levels, 1 to 256 in flight; lm-eval gsm8k 500 and ifeval 541 |
 | Output quality of every precision against its own bf16 (*What quantisation costs in answers*) | one `g7e.2xlarge` or `g7e.8xlarge` in four regions | 30B MoE (two releases), 8B, 27B, 32B dense, Mistral Small 3.2 24B; bf16, fp8, NVFP4, GPTQ, AWQ, fp8 KV | lm-eval 0.4.13 standard suite: MMLU 2,850, five log-likelihood tasks at 500, WikiText 60 docs, GSM8K 500, IFEval 541; ~40 min per configuration |
+| Agentic quality of every precision (*What quantisation costs an agent*, *Tool calling*) | 4 × `g7e.2xlarge` in two regions, 2 × `g7e.8xlarge` in a third | Qwen3-Coder-30B-A3B, Qwen3-32B, Qwen3-30B-A3B-2507 in bf16, fp8, AWQ, NVFP4; gpt-oss-120b | BFCL v4 single and multi-turn (4,441), τ-bench retail and airline (164 tasks, 2 trials), SWE-bench Verified first 100 with mini-swe-agent, CoNLL-2003 extraction 1,000 sentences in three JSON modes; one bf16 configuration repeated for the noise floor; 1.5 to 4 h per configuration |
 
 Run-to-run noise, measured by repeating configurations: an eight-engine H100 host reproduced every row
 within ±2% back to back and across two days and two regions; a single g7e engine within ±3 to 4%
@@ -1885,7 +2020,7 @@ Considered and left out, each with the condition that would bring it back:
 | Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above, and a shipped MTP head +9 to +18% on one GPU (*EAGLE-3*) | a publisher draft or an MTP head exists for your model: add the one line |
 | Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
 | Suffix decoding (a better n-gram) | needs a package the engine image does not ship; n-gram itself measured −58% | agentic or code-editing traffic with heavy repetition, and an image rebuild |
-| Structured output and tool-call grammars in the benchmark | not measured; they add per-request grammar compilation | your traffic is mostly tool calls or JSON schemas |
+| A prefix-aware or agent-aware gateway (per-conversation routing, request queueing, a longer origin timeout for agent steps) | The stack is one load balancer and a CDN; agent steps over 120 s hit the CDN's non-streamed limit (*Tool calling*) and the fix is to stream | your agents cannot stream and their steps run past two minutes |
 
 ## Interpreting your own measurements
 
