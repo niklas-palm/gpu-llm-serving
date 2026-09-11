@@ -46,9 +46,9 @@ instanceType: g7e.2xlarge
 # 16 = the GPU count of two g7e.48xlarge for about 20% less money. It covers this example workload:
 #   ~1,000 input tokens at ~70 req/s, 8 s budget       ->  70,000 input tok/s
 #   ~2,600 input tokens at ~65 req/s, 20-25 s budget   -> 170,000 input tok/s
-# One GPU sustains ~15,500 input tok/s inside an 8 s p95 (single-instance figure at its latency knee,
-# 16,075 measured, rounded down). 16 GPUs = ~248,000 against 240,000 needed,
-# 3% spare, so maxInstanceCount leaves room above it.
+# One GPU sustains ~16,000 input tok/s inside an 8 s p95 (single-instance figure at its latency knee,
+# 16,075 measured). 16 GPUs = ~256,000 against 240,000 needed, 7% spare, so maxInstanceCount leaves
+# room above it.
 #
 # Two fleets would cost 14, not 16. One endpoint has one latency budget, so the whole fleet meets the
 # strictest one. At a 20-25 s budget a GPU sustains ~27,600 input tok/s, so split by budget it is
@@ -107,10 +107,10 @@ useSpot: false
 
 # Every deployment gets a CloudWatch dashboard and two alarms (engines unhealthy, load balancer
 # erroring), plus a latency alarm if latencyAlarmSeconds is set. Top rows: load balancer and ASG
-# metrics. Bottom rows: engine metrics from a sidecar in every task (queue depth, batch occupancy,
+# metrics. Bottom three rows: engine metrics from a sidecar in every task (queue depth, batch occupancy,
 # KV cache usage, preemptions, time to first token, request time, tokens in and out per request,
-# requests by size band, prefix cache hit rate). Ten metrics plus one series per band edge,
-# about $7.50 a month with the shipped bands.
+# requests by size band, prefix cache hit rate). Ten metrics plus one series per band edge plus one,
+# about $7 a month with the shipped bands.
 # scripts/endpoint_info.py prints the dashboard URL.
 # docs/tuning.md, "Watching a running fleet" and "Engine metrics".
 

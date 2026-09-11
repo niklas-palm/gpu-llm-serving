@@ -20,7 +20,7 @@ so sticky routing is honoured; --schema asks for structured JSON; --reasoning-ef
 model's effort. A comma-separated --input-tokens or --output-tokens is a mix, each request drawing one.
 
 Three things the script does that the numbers depend on, each with its measurement in docs/tuning.md
-(*If you are benchmarking this yourself*): prompts are unique by default, a nonce up front defeating the
+(*If you are benchmarking this yourself* and *Two things about measuring itself*): prompts are unique by default, a nonce up front defeating the
 prefix cache, because that is the shape a fleet is sized for (--shared-prefix measures the cached case);
 load is spread across processes, because one process driving 768 connections measured a third of the
 true throughput; and every level drains its open requests before the next starts, because behind
@@ -218,11 +218,16 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
 
 
 def served_model(url: str, key: str) -> str:
-    r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-    r.raise_for_status()
-    models = [m["id"] for m in r.json().get("data") or []]
+    """The first model /v1/models lists; one line and exit on any failure, since a wrong key or URL is
+    the usual first-run mistake and a traceback says nothing about which."""
+    try:
+        r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+        r.raise_for_status()
+        models = [m["id"] for m in r.json().get("data") or [] if isinstance(m, dict) and m.get("id")]
+    except (requests.RequestException, ValueError) as e:
+        sys.exit(f"could not read {url}/v1/models: {e}")
     if not models:
-        sys.exit("the endpoint lists no model")
+        sys.exit(f"{url}/v1/models lists no model")
     return models[0]
 
 

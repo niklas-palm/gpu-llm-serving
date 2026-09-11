@@ -362,7 +362,7 @@ class ServingStack(Stack):
         capacity_provider = ecs.AsgCapacityProvider(
             self, "GpuCapacity", auto_scaling_group=asg,
             # Left OFF. Enabled, it stops the ASG terminating an instance that still has
-            # tasks - which also means a scale to zero waits on it. The measured ~3 minute
+            # tasks - which also means a scale to zero waits on it. The measured ~5 minute
             # teardown depends on this being off.
             enable_managed_termination_protection=False,
             # ECS drains the instance itself when the ASG terminates it. Without this CDK adds its own
@@ -644,7 +644,7 @@ class ServingStack(Stack):
         #
         # No dimensions. CloudWatch then aggregates every engine's samples per minute, so
         # `Maximum` is the worst engine and `Average` the typical one - which is what the dashboard
-        # needs - and the bill is ten metrics plus the band series regardless of fleet size. A per-task dimension would
+        # needs - and the bill is ten metrics plus one series per band edge plus one regardless of fleet size. A per-task dimension would
         # let you name the sick engine, at a cost that grows with the fleet; the task's own logs in
         # the log group already serve that purpose.
         engine_metrics_namespace = f"{self.stack_name}/Engine"
@@ -835,7 +835,7 @@ service:
         #   errors, healthy tasks, instances. Free, and there is no collection path that can break.
         # * What the engine itself reports, via the metrics sidecar defined with the task above: queue
         #   depth, batch occupancy, KV cache usage, preemptions. These are the numbers that say WHY
-        #   latency is rising rather than just that it is; ten metrics plus one series per band edge.
+        #   latency is rising rather than just that it is; ten metrics plus one series per band edge plus one.
         #
         # Everything user-facing here is written in plain language on purpose. The reader is someone
         # woken by an alarm who has never seen this stack, so a widget titled "TargetResponseTime p95"

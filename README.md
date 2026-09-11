@@ -4,7 +4,7 @@ Deploy an open-weight LLM with [vLLM](https://github.com/vllm-project/vllm) on A
 a load balancer, with an OpenAI-compatible API.
 
 Any model vLLM serves: `modelId` is a Hugging Face repo id, and the stack derives the GPUs per engine
-from the model's size. It has served eleven models from 8B to 235B, dense, mixture-of-experts and
+from the model's size. It has served ten models from 8B to 235B, dense, mixture-of-experts and
 hybrid, in bf16, fp8 and four 4-bit formats, on one GPU and on eight; the table in [Configure](#configure)
 lists them with the one or two settings each needed beyond `modelId`. The shipped default is one of
 them, chosen because it fits one GPU with room for a large cache.
@@ -644,8 +644,8 @@ never returns "busy").
 **While serving**, GPU instances dominate. Spot is typically 40–70% cheaper than on-demand.
 
 **While idle**, with the GPU count at zero: load balancer (~$16–20/month), NAT gateway (~$32/month plus
-data), storage for the image, and about $7.50/month for the ten engine metrics plus one series per
-band edge (custom metrics are billed per name, not per task).
+data), storage for the image, and about $7/month for the ten engine metrics plus one series per band
+edge plus one (custom metrics are billed per name, not per task).
 
 **Autoscaling does not reliably reduce this**: a fleet that grew during a spike shrinks over 45–60
 minutes (see [Notes](#notes-and-limitations)). To stop paying, scale to zero.

@@ -1697,9 +1697,9 @@ Signals:
 It is the **requests per minute, per task**, at which capacity is added. Derivation:
 
 ```
-one g7e.2xlarge sustained ~17 requests/sec inside an 8 s p95 budget   (1,000-token prompts)
-17 × 60                = 1,020 requests/minute per task at saturation
-1,020 × 0.85           ≈ 870                                          <- for 1,000-token prompts
+one g7e.2xlarge sustained 17.2 requests/sec inside an 8 s p95 budget  (1,000-token prompts)
+17.2 × 60              = 1,032 requests/minute per task at saturation
+1,032 × 0.85           ≈ 870                                          <- for 1,000-token prompts
 ```
 
 The **shipped default is 445, not 870**: the example workload it is sized for mixes two request shapes with a
@@ -1709,7 +1709,7 @@ either is fine. Longer prompts mean fewer requests carrying the same tokens, so 
 down (next section). Split into one fleet per shape and the thresholds become ~870 and ~315; a blended
 threshold serves neither shape well.
 
-The 0.9 is the margin, and 90% is *late* given the ~11 minutes scale-out takes; to grow sooner, lower
+The 0.85 is the margin, and 85% is *late* given the ~11 minutes scale-out takes; to grow sooner, lower
 the multiplier, not the measured rate.
 
 #### Estimate it from traffic you already have, before deploying anything
@@ -1740,7 +1740,7 @@ scaling; being 4x out means never scaling at all.
 1. Deploy one instance and find the highest concurrency it sustains inside your latency budget (see
    *Choosing an operating concurrency*).
 2. Take the requests/second it achieved there and multiply by 60.
-3. Multiply by 0.8–0.9.
+3. Multiply by 0.85.
 
 If the measurement disagrees with the estimate by more than about 30%, trust the measurement and check
 whether your real prompts are longer than you assumed, the usual cause.
@@ -1753,7 +1753,7 @@ Measured on identical hardware:
 | Prompt size | Input tok/s per GPU | Requests/sec per GPU | Correct threshold |
 |---|---|---|---|
 | 1,000 tokens | 16,075 | 17.2 | **~870/min** |
-| 4,000 tokens | 15,277 | 4.2 | **~225/min** |
+| 4,000 tokens | 15,277 | 4.2 | **~215/min** |
 
 Same GPU work in both rows, packaged into a quarter as many requests, so the request threshold comes
 down by the same factor.
@@ -2025,7 +2025,7 @@ Considered and left out, each with the condition that would bring it back:
 | Multi-instance GPU (four 24 GB slices per card) | A 30B fp8 model needs the whole card | a model under 20 GB with strict per-tenant isolation |
 | Pipeline parallelism, multi-node engines | Every model measured fits one instance | a model over 640 GB in fp8 |
 | Another engine (TensorRT-LLM, SGLang) | One engine, measured deeply, beats two measured shallowly for a sample | a kernel gap on a GPU generation this engine does not serve well |
-| Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above, and a shipped MTP head +9 to +18% on one GPU (*EAGLE-3*) | a publisher draft or an MTP head exists for your model: add the one line |
+| Speculative decoding on by default | the draft is specific to the model, so it cannot ship with a `modelId` the user chooses; with a batch-size schedule it measured +17 to +54% below 32 per engine and neutral above, and a shipped MTP head +9 to +18% on one GPU (*Speculative decoding with EAGLE-3*) | a publisher draft or an MTP head exists for your model: add the one line |
 | Load shedding in the engine | vLLM 0.28.0 has no queue limit or admission control; it lives at the client | an engine release that rejects above a queue depth |
 | Suffix decoding (a better n-gram) | needs a package the engine image does not ship; n-gram itself measured −58% | agentic or code-editing traffic with heavy repetition, and an image rebuild |
 | A prefix-aware or agent-aware gateway (per-conversation routing, request queueing, a longer origin timeout for agent steps) | The stack is one load balancer and a CDN; agent steps over 120 s hit the CDN's non-streamed limit (*Tool calling*) and the fix is to stream | your agents cannot stream and their steps run past two minutes |

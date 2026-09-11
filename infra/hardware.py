@@ -434,10 +434,11 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     Fails loudly on values that produce a deployment which starts and then misbehaves, because those
     are far more expensive to diagnose than a synth-time error.
     """
-    # None and "" both mean "the default": `kvCacheDtype:` with nothing after it and `kvCacheDtype: ""` are
-    # the same intent, and "" used to turn a boolean key off and fail a numeric one.
+    # None and a blank string both mean "the default": `kvCacheDtype:` with nothing after it and
+    # `kvCacheDtype: ""` are the same intent, and "" used to turn a boolean key off and fail a numeric one.
     t = {**DEFAULT_TUNING,
-         **{k: v for k, v in _mapping(tuning, "tuning").items() if v is not None and v != ""}}
+         **{k: v for k, v in _mapping(tuning, "tuning").items()
+            if v is not None and not (isinstance(v, str) and not v.strip())}}
 
     util = _num(t["gpuMemoryUtilization"], "gpuMemoryUtilization", float)
     if not 0.50 <= util <= 0.97:

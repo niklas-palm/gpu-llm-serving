@@ -86,7 +86,8 @@ def parse(text: str) -> dict[str, list[str]] | None:
             out = {}
             for k in KEYS.values():
                 v = d.get(k, [])
-                out[k] = [re.sub(r"\s+", " ", str(x)).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+                out[k] = ([re.sub(r"\s+", " ", str(x)).strip() for x in v if isinstance(x, (str, int, float)) and str(x).strip()]
+                          if isinstance(v, list) else [])
             return out
     return None
 
@@ -100,11 +101,16 @@ def score(gold: dict, pred: dict | None) -> tuple[int, int, int]:
 
 
 def served_model(url: str, key: str) -> str:
-    r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-    r.raise_for_status()
-    models = [m["id"] for m in r.json().get("data") or []]
+    """The first model /v1/models lists; one line and exit on any failure, since a wrong key or URL is
+    the usual first-run mistake and a traceback says nothing about which."""
+    try:
+        r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+        r.raise_for_status()
+        models = [m["id"] for m in r.json().get("data") or [] if isinstance(m, dict) and m.get("id")]
+    except (requests.RequestException, ValueError) as e:
+        sys.exit(f"could not read {url}/v1/models: {e}")
     if not models:
-        sys.exit("the endpoint lists no model")
+        sys.exit(f"{url}/v1/models lists no model")
     return models[0]
 
 
