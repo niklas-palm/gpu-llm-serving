@@ -98,7 +98,8 @@ on-demand have separate quotas.**
 | `g7e.48xlarge` | 8 | 768 GiB | 192 | 2 TiB | **no**, needs 192 |
 | `p5.4xlarge` / `p5.48xlarge` | 1 / 8 x H100 80 GiB | 80 GiB / 640 GiB | 16 / 192 | 256 GiB / 2 TiB | separate P quotas; for comparison runs, not the measured platform |
 
-The default fits 64 vCPU. Larger needs an increase a new account will not have.
+The shipped default of 16 needs 128 vCPU; eight fit the 64 vCPU default quota exactly. Anything larger needs an
+increase a new account will not have.
 
 **Check the quota that matches your `useSpot` setting**, or the stack succeeds and no instance ever
 launches:
@@ -185,11 +186,22 @@ Smaller weights of the same model run faster and need fewer instances; measured 
 |---|---|---|---|
 | `Qwen/Qwen3-30B-A3B-Instruct-2507` | `"fp8"` | 14,900 | shipped default |
 | `Qwen/Qwen3-30B-A3B-Instruct-2507-FP8` | `""` | same | publisher's fp8; half the download |
-| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit, built from the earlier thinking release of the model, not Instruct-2507; lossless against its own bf16 base on gsm8k and ifeval (*NVFP4* in docs/tuning.md) |
+| `nvidia/Qwen3-30B-A3B-NVFP4` | `""` | 19,100 (+28%) | 4-bit, built from the earlier thinking release of the model, not Instruct-2507. A calibrated 4-bit build costs 0.5 to 2 points on the standard suite and about one point of tool-calling accuracy against its own bf16 (*What quantisation costs in answers* and *What quantisation costs an agent* in docs/tuning.md) |
 | any of the above + EAGLE-3 speculator in `extraArgs` | | +24% to +41% | one line; see [docs/tuning.md](docs/tuning.md) |
 
-bf16 with no quantisation measured 55 to 63% of fp8's throughput. Details, and the caveats, in *Quantisation is two
-independent decisions* and *Speculative decoding with EAGLE-3* in [docs/tuning.md](docs/tuning.md).
+bf16 with no quantisation measured 55 to 63% of fp8's throughput, and fp8 costs nothing measurable in answers on any
+task or agent benchmark. Details, and the caveats, in *Quantisation is two independent decisions* and *Speculative
+decoding with EAGLE-3* in [docs/tuning.md](docs/tuning.md).
+
+**Three more decisions before the first deploy**, each one key, each measured in [docs/tuning.md](docs/tuning.md):
+
+| If | Set | Because |
+|---|---|---|
+| anything but a plain chat client will call it (an agent framework, a coding agent, your own tool-calling harness) | `toolCallParser` to the model family's parser (`hermes` for Qwen3, `qwen3_coder`, `openai` for gpt-oss, `llama3_json`, `mistral`) | without it a request with `tools` gets the tool call back as text and the agent stalls silently (*Tool calling*) |
+| the model thinks (Qwen3 thinking builds, gpt-oss) | thinking off through `extraArgs: --default-chat-template-kwargs '{"enable_thinking": false}'`, or `reasoningParser` when you want the chain of thought separated from the answer | the chain of thought is the capacity setting: 1.7 to 3.5 times the tokens per answer, and it eats every answer cap (*Reasoning models*) |
+| traffic is multi-turn conversations and each client keeps its own cookies | `stickySessions: true` | the prefix cache is per engine; round robin hit it 21% of the time on eight engines, stickiness 75% (*Prefix caching is a routing decision*). Leave it off behind a gateway |
+
+`AGENTS.md` turns these into the questions to ask before deploying for someone else.
 
 The shipped fleet defaults are sized for a production workload; `config.yaml` shows the arithmetic:
 
@@ -261,7 +273,8 @@ CloudFront is a pass-through, not a cache: nothing cached, every header forwarde
 **A non-streamed answer must finish within 120 seconds.** The read timeout resets on every byte, so a
 streamed response can run as long as it likes; a non-streamed one gets a 504 after 120 s while the
 engine finishes anyway. 120 s is the most the default quota allows. At ~30 tokens/s per request on a
-busy engine, that is roughly 3,000 tokens. For anything longer, stream:
+busy engine, that is roughly 3,000 tokens. Agent frameworks send long steps, tens of thousands of prompt tokens
+on a busy engine, and hit this limit as `504`s that no retry fixes. For anything long, stream:
 
 ```bash
 curl -sN -X POST "$ENDPOINT/v1/responses" -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
@@ -710,8 +723,10 @@ Two caveats: **p99 leaves the budget long before p95** (13.10 s at 1024 concurre
 `g7e.2xlarge`, unique 1,000-token prompts, 768 concurrent): an EAGLE-3 speculator, one line in
 `extraArgs`, raised throughput 24% and cut p95 from 6.33 s to 5.62 s; the NVFP4 checkpoint of the same
 model raised it 28% and cut p95 to 5.06 s. Neither is the default: the speculator is tied to the model,
-and NVFP4 is one gsm8k check away from a recommendation, not a certification. *Speculative decoding*
-and *NVFP4* in [docs/tuning.md](docs/tuning.md).
+and a 4-bit build is a measured trade, not a free upgrade: calibrated NVFP4 costs 0.5 to 2 points on the standard
+suite and about one point of tool-calling accuracy, and one uncalibrated community build passed the chat
+benchmarks and failed at tool use. *Speculative decoding*, *NVFP4* and the two quality sections in
+[docs/tuning.md](docs/tuning.md).
 
 **Measured since, on other hardware and models** (all in [docs/tuning.md](docs/tuning.md) and
 [measurements/](measurements/README.md)): tensor, expert and data parallelism up to eight GPUs on H100s
@@ -798,5 +813,6 @@ would otherwise take a 20-minute deployment to surface.
   releases; upgrade on purpose and re-run `scripts/test_endpoint.py`.
 - **Gated models need `hfTokenSecretName`.** Without it the task fails with a 401 while pulling; with a
   token whose account has not accepted the licence, a 403.
-- **g7e only.** The instance catalog in `infra/hardware.py` knows the six g7e sizes and rejects anything
-  else at synth. Another GPU family means adding its entries there; nothing else assumes g7e.
+- **g7e, plus p5 for comparison runs.** The instance catalog in `infra/hardware.py` knows the six g7e sizes and
+  two p5 sizes and rejects anything else at synth. Another GPU family means adding its entries there; nothing
+  else assumes g7e. Every number in the docs is g7e unless it says H100.
