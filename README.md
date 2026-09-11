@@ -1,4 +1,4 @@
-# GPU LLM Serving with vLLM
+# LLM Serving with vLLM
 
 Deploy an open-weight LLM with [vLLM](https://github.com/vllm-project/vllm) on AWS GPU instances behind
 a load balancer, with an OpenAI-compatible API.
