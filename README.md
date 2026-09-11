@@ -3,6 +3,12 @@
 Deploy an open-weight LLM with [vLLM](https://github.com/vllm-project/vllm) on AWS GPU instances behind
 a load balancer, with an OpenAI-compatible API.
 
+Any model vLLM serves: `modelId` is a Hugging Face repo id, and the stack derives the GPUs per engine
+from the model's size. It has served twelve models from 8B to 235B, dense, mixture-of-experts and
+hybrid, in bf16, fp8 and four 4-bit formats, on one GPU and on eight; the table in [Configure](#configure)
+lists them with the one or two settings each needed beyond `modelId`. The shipped default is one of
+them, chosen because it fits one GPU with room for a large cache.
+
 This is a vLLM deployment, not a generic container host. The entrypoint turns the config keys into vLLM
 flags, the tuning doc measures vLLM settings, and the dashboard reads vLLM's own metrics (queue depth,
 KV cache, time to first token, request sizes, prefix cache hits). Another engine would mean replacing
@@ -178,7 +184,28 @@ instanceType: g7e.2xlarge
 modelId: Qwen/Qwen3-30B-A3B-Instruct-2507
 ```
 
-**The weights are a choice.** The shipped config quantises the bf16 checkpoint to fp8 at load time.
+**Models this stack has served**, and what each needed beyond `modelId`. Everything else is derived or
+measured default. Sizes are the checkpoint's, GPUs are per engine:
+
+| Model | Kind | GPUs | Formats served | Beyond `modelId` |
+|---|---|---|---|---|
+| `Qwen/Qwen3-30B-A3B-Instruct-2507` | MoE, 3B active | 1 | bf16, load-time fp8, publisher fp8; NVFP4 and GPTQ of the earlier release | nothing: the shipped default |
+| `Qwen/Qwen3-Coder-30B-A3B-Instruct` | MoE, 3B active | 1 | bf16, fp8, AWQ, NVFP4 | `toolCallParser: qwen3_coder` |
+| `Qwen/Qwen3-8B`, `Qwen/Qwen3-32B` | dense, thinking | 1 | bf16, fp8, AWQ, NVFP4 | `toolCallParser: hermes`; thinking off through `extraArgs`, or `reasoningParser: qwen3` |
+| `Qwen/Qwen3.8-27B` | dense, thinking | 1 | bf16, fp8, NVFP4 | as above |
+| `mistralai/Mistral-Small-3.2-24B-Instruct-2506` | dense | 1 | bf16, fp8, NVFP4 (Red Hat builds) | `extraArgs: --tokenizer-mode mistral --config-format mistral --load-format mistral` for the official checkpoint; the NVFP4 build also needs `--limit-mm-per-prompt '{"image": 0}'`; `toolCallParser: mistral` |
+| `Qwen/Qwen3-Next-80B-A3B-Instruct-FP8` | hybrid linear-attention MoE | 1 | fp8 | `maxModelLen: 32768` on a 96 GB card; its MTP head is one line in `extraArgs` (*Speculative decoding with EAGLE-3* in docs/tuning.md) |
+| `openai/gpt-oss-120b` | MoE, MXFP4 | 1 | MXFP4 (the only build) | `toolCallParser: openai`, `reasoningParser: openai_gptoss`, `kvCacheDtype: auto`; `estimatedParamsBillions: 32` so the fit check, which assumes 16-bit weights, sees its 63 GB |
+| `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4` | hybrid MoE, NVFP4 | 1 | NVFP4 | `extraEnv: {VLLM_USE_FLASHINFER_MOE_FP4: "0", VLLM_NVFP4_GEMM_BACKEND: marlin}` and `gpuMemoryUtilization: 0.90` for a stable start |
+| `Qwen/Qwen3-235B-A22B-Instruct-2507` | MoE, 22B active | 4 or 8 (H100) | publisher fp8 (block-quantised), bf16 | fp8: `tensorParallel: 4` and two engines per host, or 8 with `enableExpertParallel` (block-quantised weights refuse TP=8 without it); bf16: TP=8 with `maxModelLen: 32768` |
+
+Formats, kernels and what each one costs in throughput and in answers are in *Choosing a model to host*,
+*Quantisation is two independent decisions* and the two quality sections of
+[docs/tuning.md](docs/tuning.md); *Will my model fit?* covers the size check. A model not in the table is
+not a problem: set `modelId`, set `estimatedParamsBillions` if it is not roughly 30B, add the tool parser
+for its family, and read the `[serve] vllm serve ...` line in the task log for anything the engine asks for.
+
+**The weights are a choice.** For the shipped model, the config quantises the bf16 checkpoint to fp8 at load time.
 Smaller weights of the same model run faster and need fewer instances; measured on this GPU with unique
 1,000-token prompts, per instance at the same load:
 
@@ -227,7 +254,8 @@ lose one engine, not eight, to a spot reclaim (*Choosing an instance type* in
 smallest degree that fits and let `replicas: 0` fill the rest: two TP=4 engines measured 22.5 req/s on
 eight H100s where one TP=8 engine measured 13.4 (*Topology* in [docs/tuning.md](docs/tuning.md)).
 
-**Sizing and scaling, in short.** One g7e.2xlarge engine sustains about 16,000 input tokens/s at fp8;
+**Sizing and scaling, in short.** One g7e.2xlarge engine sustains about 16,000 input tokens/s at fp8 for the
+shipped model (a dense 27B in fp8 measured about a third of it; measure yours with `scripts/benchmark.py`);
 divide by your average input tokens per request for its requests/s. Size `instanceCount` for steady
 state from that, and derive the autoscaling threshold rather than keeping the shipped one:
 
