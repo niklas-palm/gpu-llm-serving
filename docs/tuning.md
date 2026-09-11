@@ -462,7 +462,9 @@ perplexity row. Run it on your own prompts before switching a fleet.
 The suite above scores knowledge and short answers. An agent fails differently: it emits a tool call
 with the wrong argument, loses the thread on turn six, or writes a patch that does not apply. So every
 precision was also scored on four agentic benchmarks through the endpoint, with their published
-scaffolds unchanged and the engine's tool parser in the loop:
+scaffolds unchanged and the engine's tool parser in the loop. As in the section above, every row is a
+precision measured against its own family's bf16; the families are there to show whether the precision
+effect depends on architecture, not to compare models with each other:
 
 - **BFCL v4** (Berkeley Function Calling Leaderboard), the single-turn and multi-turn categories, 4,441
   tests, graded by AST match and by final state. Tools go in the request, `tool_calls` come back, so
@@ -538,10 +540,12 @@ What generalises:
 - **Agent metrics are noisy in a way Q&A metrics are not.** Two identical deployments disagree on 12% of
   SWE-bench instances and 27% of τ-bench tasks; these are the flip rates of *nothing*. Compare only
   aggregates, on the same instance list, and repeat the baseline once before believing a delta.
-- **Model choice moves more than precision.** Retail τ-bench: 52 to 60 for the two Qwen3 30B and 32B
-  instruct models, 23 for the Coder; SWE-bench: 22 for the Coder, 13 for the 30B, 5 for the 32B; BFCL
-  multi-turn 36 for the 30B-2507, 29 for the Coder, 25 for the 32B. Pick the model for the job, then
-  pick the precision.
+- **The model moves the score more than the precision does.** Between the three families measured
+  here, the same benchmark differs by 20 to 40 points (τ-bench retail, SWE-bench, BFCL multi-turn),
+  while the precision moves it by one. These rows are not a ranking of models: each family was picked
+  as a different architecture to test the precision effect on, and the families differ on which task
+  each is better at. Choose the model for your task on your task, then choose the precision by these
+  rules.
 - **Constrained decoding does not change extraction quality.** The strict schema, `json_object` and a
   plain "answer with JSON" prompt agree within a point of F1 on every configuration (Coder 69.9, 69.7,
   69.7; 32B 65.2, 65.2, 65.2), and the free answers all parsed. The schema buys a guaranteed shape at
