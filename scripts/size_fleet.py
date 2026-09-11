@@ -26,7 +26,7 @@ def plan(engine_rps: float, demand_rps: float, price_per_hour: float, gpus_per_i
          input_tokens: int, output_tokens: int, headroom: float) -> dict:
     per_instance = engine_rps * gpus_per_instance
     usable = per_instance * (1 - headroom)
-    instances = max(1, math.ceil(demand_rps / usable))
+    instances = max(1, math.ceil(demand_rps / usable - 1e-9))   # 2.1 / 0.7 is 3.0000000000000004 in floats
     fleet_rps = instances * per_instance
     fleet_price = instances * price_per_hour
     tokens_per_hour = demand_rps * 3600 * (input_tokens + output_tokens)
@@ -53,8 +53,9 @@ def main() -> int:
     ap.add_argument("--headroom", type=float, default=0.15,
                     help="fraction of capacity kept free for bursts and a lost instance (0.15 = 15%%)")
     a = ap.parse_args()
-    if min(a.engine_rps, a.demand_rps, a.price_per_hour) <= 0 or a.gpus_per_instance < 1 or not 0 <= a.headroom < 1:
-        sys.exit("rates and price must be above 0, gpus-per-instance at least 1, headroom in [0, 1)")
+    if (min(a.engine_rps, a.demand_rps, a.price_per_hour) <= 0 or a.gpus_per_instance < 1 or not 0 <= a.headroom < 1
+            or min(a.input_tokens, a.output_tokens) < 0 or a.input_tokens + a.output_tokens < 1):
+        sys.exit("rates and price above 0, gpus-per-instance at least 1, headroom in [0, 1), tokens at least 1 in total")
     p = plan(a.engine_rps, a.demand_rps, a.price_per_hour, a.gpus_per_instance, a.input_tokens, a.output_tokens, a.headroom)
     print(f"one engine {a.engine_rps:g} req/s x {a.gpus_per_instance} per instance, {a.headroom:.0%} headroom, "
           f"demand {a.demand_rps:g} req/s at {a.input_tokens}+{a.output_tokens} tokens\n")

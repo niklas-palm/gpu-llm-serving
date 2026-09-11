@@ -449,7 +449,7 @@ def main() -> int:
 def _run(entry=None) -> int:
     """Turn an AWS API failure into one actionable line instead of a botocore traceback.
 
-    Worth doing because the most common failure by far is an expired SSO session, and unhandled it
+    The most common failure by far is an expired SSO session, and unhandled it
     surfaced as `ClientError: An error occurred (ExpiredToken)` with a stack trace at whichever API
     call happened to come first - which tells the reader nothing about what to do.
     """

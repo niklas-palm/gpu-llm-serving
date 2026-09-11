@@ -21,9 +21,9 @@ DEFAULT_STACK = "GpuLlmServing"
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--region", default=None, help="defaults to `region` in config.yaml")
-    ap.add_argument("--stack", default=DEFAULT_STACK)
+    ap.add_argument("--stack", default=DEFAULT_STACK, help="the CloudFormation stack name")
     a = ap.parse_args()
 
     region = a.region or config_region()

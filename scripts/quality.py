@@ -24,8 +24,8 @@ MATH (its few-shot answer format is not followed under a chat template, so exact
 for every model), and humaneval (an instruct model given a bare function signature writes prose or a
 second definition, the stop strings cut it, and quantised builds "beat" bf16 by 3 to 12 points with
 one-directional flips; the chat form of the task cannot be run over an API because it pre-fills the
-assistant turn). A code score needs a chat-compatible task; until then, do not read precision from it. Limits keep it to about 40 minutes on one engine; the interval at these
-sizes is 1 to 2 points, enough to see a precision that answers worse, not enough to certify one that
+assistant turn). A code score needs a chat-compatible task; until then, do not read precision from it.
+Limits keep it to about 40 minutes on one engine; the interval at these sizes is 1 to 2 points, enough to see a precision that answers worse, not enough to certify one that
 does not. Run the same command against two deployments and compare rows, or pass --compare to get the
 fraction of questions whose answer changed: a precision can keep the aggregate and still flip one
 answer in ten.
@@ -81,7 +81,6 @@ METRICS = {   # the one number to report per task, and the key of its per-sample
     "arc_challenge": "acc_norm,none", "hellaswag": "acc_norm,none", "winogrande": "acc,none",
     "truthfulqa_mc2": "acc,none", "mmlu": "acc,none", "wikitext": "word_perplexity,none",
     "gsm8k": "exact_match,strict-match", "ifeval": "prompt_level_strict_acc,none",
-
 }
 SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_norm", "hellaswag": "acc_norm"}
 
@@ -89,7 +88,10 @@ SAMPLE_SCORE = {"gsm8k": "exact_match", "mmlu": "acc", "arc_challenge": "acc_nor
 def served_model(url: str, key: str) -> str:
     r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
     r.raise_for_status()
-    return r.json()["data"][0]["id"]
+    models = [m["id"] for m in r.json().get("data") or []]
+    if not models:
+        sys.exit("the endpoint lists no model")
+    return models[0]
 
 
 def harness(kind: str, tasks: str, extra: list[str], limit: int, a: argparse.Namespace, model: str, out: str) -> None:
@@ -138,6 +140,8 @@ def summarise(out: str, tag: str, model: str, csv_path: str = "") -> list[dict]:
         print(f"{task:28} {key:30} {shown:>8} {100 * err:>5.1f} {n:>6}")
         rows.append({"tag": tag, "model": model, "task": task, "metric": key, "score": round(score, 4),
                      "stderr": round(err, 4), "n": n})
+    if not rows:
+        sys.exit("no task in the results matched METRICS")
     if csv_path:
         new = not os.path.exists(csv_path)
         with open(csv_path, "a", newline="") as f:

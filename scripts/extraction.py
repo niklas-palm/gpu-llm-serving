@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sys
+import statistics
 import tempfile
 import time
 from collections import Counter
@@ -41,6 +42,7 @@ from concurrent.futures import ThreadPoolExecutor
 import requests
 
 KEYS = {"PER": "persons", "ORG": "organizations", "LOC": "locations", "MISC": "misc"}
+MODES = ("schema", "json", "free")
 SCHEMA = {"type": "object", "additionalProperties": False, "required": list(KEYS.values()),
           "properties": {k: {"type": "array", "items": {"type": "string"}} for k in KEYS.values()}}
 SYSTEM = ("Extract the named entities from the sentence. Answer with one JSON object and nothing else, with the "
@@ -70,18 +72,23 @@ def entities(tokens: list[str], tags: list[int], names: list[str]) -> dict[str, 
 
 
 def parse(text: str) -> dict[str, list[str]] | None:
-    """The JSON object in the answer, or None. Lenient: takes the first {...} block, tolerates a code fence."""
-    m = re.search(r"\{.*\}", text or "", re.S)
-    if not m:
-        return None
-    try:
-        d = json.loads(m.group(0))
-    except ValueError:
-        return None
-    if not isinstance(d, dict):
-        return None
-    return {k: [re.sub(r"\s+", " ", str(x)).strip() for x in d.get(k, []) if str(x).strip()]
-            if isinstance(d.get(k, []), list) else [] for k in KEYS.values()}
+    """The first JSON object in the answer, or None. Tolerates a code fence, prose before or after, and
+    a second object: a greedy first-brace-to-last-brace match failed all three."""
+    dec = json.JSONDecoder()
+    for i, ch in enumerate(text or ""):
+        if ch != "{":
+            continue
+        try:
+            d, _ = dec.raw_decode(text, i)
+        except ValueError:
+            continue
+        if isinstance(d, dict):
+            out = {}
+            for k in KEYS.values():
+                v = d.get(k, [])
+                out[k] = [re.sub(r"\s+", " ", str(x)).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
+            return out
+    return None
 
 
 def score(gold: dict, pred: dict | None) -> tuple[int, int, int]:
@@ -90,6 +97,15 @@ def score(gold: dict, pred: dict | None) -> tuple[int, int, int]:
     p = Counter((k, m) for k, ms in (pred or {}).items() for m in ms)
     tp = sum((g & p).values())
     return tp, sum(p.values()) - tp, sum(g.values()) - tp
+
+
+def served_model(url: str, key: str) -> str:
+    r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+    r.raise_for_status()
+    models = [m["id"] for m in r.json().get("data") or []]
+    if not models:
+        sys.exit("the endpoint lists no model")
+    return models[0]
 
 
 def body(model: str, sentence: str, shots: list[tuple[str, dict]], mode: str, max_tokens: int = 300) -> dict:
@@ -116,7 +132,7 @@ def run(a: argparse.Namespace, model: str, mode: str, docs: list, shots: list, o
             r = sess.post(f"{a.url}/v1/chat/completions", json=body(model, sentence, shots, mode, a.max_tokens), timeout=120)
             text = r.json()["choices"][0]["message"]["content"] if r.status_code == 200 else ""
             err = "" if r.status_code == 200 else f"status {r.status_code}"
-        except (requests.RequestException, ValueError, KeyError) as e:
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
             text, err = "", str(e)[:100]
         pred = parse(text)
         tp, fp, fn = score(gold, pred)
@@ -135,18 +151,20 @@ def run(a: argparse.Namespace, model: str, mode: str, docs: list, shots: list, o
             "f1": round(2 * prec * rec / (prec + rec), 4) if prec + rec else 0.0,
             "exact": round(sum(r["exact"] for r in rows) / len(rows), 4),
             "unparsed": sum(not r["parsed"] for r in rows), "errors": sum(bool(r["error"]) for r in rows),
-            "seconds_p50": round(sorted(r["seconds"] for r in rows)[len(rows) // 2], 2)}
+            "seconds_p50": round(statistics.median(r["seconds"] for r in rows), 2)}
 
 
 def compare(out: str, other: str) -> None:
     """Sentences whose extracted set changed between two runs of the same mode."""
-    for mode in ("schema", "json", "free"):
+    for mode in MODES:
         a, b = f"{out}/samples_{mode}.jsonl", f"{other}/samples_{mode}.jsonl"
         if not (os.path.exists(a) and os.path.exists(b)):
             continue
         ra = {json.loads(l)["doc_id"]: json.loads(l) for l in open(a)}
         rb = {json.loads(l)["doc_id"]: json.loads(l) for l in open(b)}
         shared = sorted(set(ra) & set(rb))
+        if not shared:
+            continue
         changed = sum(ra[i]["pred"] != rb[i]["pred"] for i in shared)
         better = sum(ra[i]["exact"] and not rb[i]["exact"] for i in shared)
         worse = sum(rb[i]["exact"] and not ra[i]["exact"] for i in shared)
@@ -158,7 +176,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("url", help="the Endpoint stack output")
     ap.add_argument("--key", required=True, help="the ApiKeyValue stack output")
-    ap.add_argument("--modes", default="schema,free", help="comma-separated: schema, json, free")
+    ap.add_argument("--modes", default="schema,free", help=f"comma-separated: {', '.join(MODES)}")
     ap.add_argument("--limit", type=int, default=1000, help="sentences, in dataset order")
     ap.add_argument("--concurrency", type=int, default=32)
     ap.add_argument("--max-tokens", type=int, default=300,
@@ -169,12 +187,10 @@ def main() -> int:
     ap.add_argument("--compare", default="", help="output directory of another run: report changed sentences")
     a = ap.parse_args()
     a.url = a.url.rstrip("/")
-    modes = [m for m in a.modes.split(",") if m]
-    if set(modes) - {"schema", "json", "free"}:
-        sys.exit("--modes takes schema, json and free")
-    r = requests.get(f"{a.url}/v1/models", headers={"Authorization": f"Bearer {a.key}"}, timeout=30)
-    r.raise_for_status()
-    model = r.json()["data"][0]["id"]
+    modes = [m.strip() for m in a.modes.split(",") if m.strip()]
+    if not modes or set(modes) - set(MODES) or a.limit < 1:
+        sys.exit(f"--modes takes any of {', '.join(MODES)}; --limit at least 1")
+    model = served_model(a.url, a.key)
     out = a.output or tempfile.mkdtemp(prefix="extraction-")
     os.makedirs(out, exist_ok=True)
 

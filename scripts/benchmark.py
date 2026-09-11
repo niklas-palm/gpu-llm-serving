@@ -13,37 +13,18 @@
 
 One row per concurrency level: requests/sec, input and output tokens/sec, latency p50/p95/p99, and the
 decode speed a single request saw. Size a fleet on the aggregate numbers; check your latency budget on
-the percentiles. Both come from the same run, which is the point: peak throughput from one level and a
-passing p95 from a lower one overstated capacity by 21% once.
+the percentiles. Both come from the same run, which is the point. --stream adds time to first token and
+measures decode from the first token to the last; --budget-seconds adds goodput, the requests per second
+that finished inside the budget. --turns N runs N-turn conversations with a cookie jar per conversation,
+so sticky routing is honoured; --schema asks for structured JSON; --reasoning-effort sets a reasoning
+model's effort. A comma-separated --input-tokens or --output-tokens is a mix, each request drawing one.
 
---stream reads the answer as it is generated and adds time to first token (p50/p95). Decode speed is
-then measured from the first token to the last, not from the whole request. --budget-seconds adds
-goodput: the requests per second that finished inside the budget. A throughput number from a run that
-missed the budget is not capacity.
-
-Prompts are unique by default (a UUID up front defeats prefix caching) because that is the shape a fleet
-has to be sized for; --shared-prefix measures the cached case instead. --turns N runs conversations:
-each thread opens a session, sends its prompt, appends the answer and a follow-up, and sends the whole
-conversation again, N times. Every turn after the first is a prefix-cache hit if it lands on the engine
-that served the previous turn, so this shape measures the load balancer as much as the engine. Each
-session keeps its own cookies, so sticky sessions on the load balancer are honoured.
-
---schema asks for a JSON object matching a fixed schema (structured output), which is what tool-calling and
-agent traffic does; the engine compiles a grammar per request and constrains every token. --reasoning-effort
-sets the effort of a reasoning model, which changes how many tokens an answer costs far more than any
-engine flag.
-
-Load is spread across processes, not threads: one Python process driving 768 connections measured a
-third of the true throughput.
-
-A comma-separated --input-tokens or --output-tokens is a mix: each request draws one size from the list,
-so a value listed twice is twice as likely. The dashboard's request-shape widgets show what arrived.
-
-Each level counts the requests that complete inside its window, then waits for the ones still in flight
-before the next level starts. Ending a level with requests open looked harmless and was not: behind
-CloudFront the engine never hears that the client went away, so up to one full concurrency of abandoned
-requests kept generating into the next level. Measured, that capped 4,000-token prompts at a fifth of
-their real rate and made a fully cached run slower than an uncached one.
+Three things the script does that the numbers depend on, each with its measurement in docs/tuning.md
+(*If you are benchmarking this yourself*): prompts are unique by default, a nonce up front defeating the
+prefix cache, because that is the shape a fleet is sized for (--shared-prefix measures the cached case);
+load is spread across processes, because one process driving 768 connections measured a third of the
+true throughput; and every level drains its open requests before the next starts, because behind
+CloudFront an abandoned request keeps generating and capped the next level at a fifth of its rate.
 """
 
 from __future__ import annotations
@@ -52,8 +33,10 @@ import argparse
 import json
 import multiprocessing as mp
 import random
+import signal
 import statistics
 import sys
+import threading
 import time
 import uuid
 
@@ -94,8 +77,9 @@ def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool, schem
         if r.status_code != 200:
             raise ValueError(f"status {r.status_code}")
         # Parsed before anything is counted, so a malformed body raises before "ok" is counted.
-        u = r.json().get("usage") or {}
-        answer = "".join(c.get("text", "") for o in r.json().get("output") or [] for c in o.get("content") or [])
+        d = r.json()
+        u = d.get("usage") or {}
+        answer = "".join(c.get("text", "") for o in d.get("output") or [] for c in o.get("content") or [])
         return dt, 0.0, int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0), answer
     body["stream"] = True
     ttft, usage, parts = 0.0, {}, []
@@ -124,9 +108,6 @@ def ask(sess, url: str, model: str, text: str, max_out: int, stream: bool, schem
 def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok: list[int],
            seconds: float, shared: bool, q: mp.Queue, stream: bool = False, turns: int = 1,
            budget: float = 0.0, schema: bool = False, effort: str = "") -> None:
-    import signal
-    import threading
-
     signal.signal(signal.SIGINT, signal.SIG_IGN)   # the parent handles Ctrl-C and terminates us
 
     stop = threading.Event()
@@ -169,6 +150,9 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
                     # the thread silently and the row reported a plausible number at lower concurrency.
                     with lock:
                         stats["fail"] += 1
+                    # An endpoint that fails instantly (503 while targets are unhealthy, refused
+                    # connections) would otherwise be hit thousands of times a second per thread.
+                    time.sleep(0.5)
                     break
                 if stop.is_set():
                     break             # finished after the window: drained, not counted
@@ -184,7 +168,7 @@ def worker(url: str, key: str, model: str, conc: int, in_tok: list[int], out_tok
     wall = time.perf_counter() - t_start
     for t in threads:   # drain: every request opened inside the window finishes before we report
         t.join(timeout=330)
-    with lock:
+    with lock:   # copies, because a thread still inside its 330 s join could append while this pickles
         q.put({"wall": wall, **stats, "lat": list(stats["lat"]), "ttft": list(stats["ttft"]),
                "decode": list(stats["decode"])})
 
@@ -195,7 +179,7 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
     q: mp.Queue = mp.Queue()
     procs = [mp.Process(target=worker, args=(a.url, a.key, model, n, a.input_tokens, a.output_tokens,
                                              a.seconds, a.shared_prefix, q, a.stream, a.turns,
-                                             a.budget_seconds, a.schema, a.reasoning_effort)) for n in per_proc if n]
+                                             a.budget_seconds, a.schema, a.reasoning_effort)) for n in per_proc]
     for p in procs:
         p.start()
     # A worker killed by the OS (OOM) would leave a bare q.get() waiting forever; the level, the drain
@@ -234,18 +218,11 @@ def run_level(a: argparse.Namespace, model: str, total: int) -> dict:
 
 
 def served_model(url: str, key: str) -> str:
-    r = None
-    try:
-        r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
-        body = r.json() if r.ok else {}
-        data = body.get("data") if isinstance(body, dict) else None
-        models = [m["id"] for m in data or [] if isinstance(m, dict) and m.get("id")]
-    except (requests.RequestException, ValueError):
-        models = []
+    r = requests.get(f"{url}/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+    r.raise_for_status()
+    models = [m["id"] for m in r.json().get("data") or []]
     if not models:
-        status = r.status_code if r is not None else "unreachable"
-        body = r.text[:200] if r is not None else ""
-        sys.exit(f"could not read /v1/models ({status}); check the endpoint and the key. Response: {body!r}")
+        sys.exit("the endpoint lists no model")
     return models[0]
 
 

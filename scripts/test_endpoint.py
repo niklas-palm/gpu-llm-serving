@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Verify a deployed endpoint: both API shapes, streaming, and a concurrency check.
 
-    python3 scripts/test_endpoint.py https://llm.example.com --key "$API_KEY"
-    python3 scripts/test_endpoint.py https://llm.example.com --key "$API_KEY" --concurrency 64
+    python3 scripts/test_endpoint.py https://<endpoint> --key "$API_KEY"
+    python3 scripts/test_endpoint.py https://<endpoint> --key "$API_KEY" --concurrency 64
 
 Exercises the Responses API and Chat Completions separately, because a deployment can serve one and
 not the other depending on the engine version.
@@ -157,12 +157,12 @@ def check_concurrency(url: str, key: str, model: str, n: int) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("url", help="the Endpoint stack output, e.g. https://llm.your.domain")
-    ap.add_argument("--key", required=True)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("url", help="the Endpoint stack output")
+    ap.add_argument("--key", required=True, help="the ApiKeyValue stack output")
     # 64, not 8: a current-generation GPU is not meaningfully loaded below ~64 concurrent requests,
     # and a throughput number taken at low concurrency understates the hardware by roughly 2x.
-    ap.add_argument("--concurrency", type=int, default=64)
+    ap.add_argument("--concurrency", type=int, default=64, help="requests in flight for the load check")
     a = ap.parse_args()
     url = a.url.rstrip("/")
 
