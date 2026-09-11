@@ -88,10 +88,6 @@ ENGINE_METRICS = (
 # Cumulative since engine start. Converted to per-scrape deltas in the collector, so a minute on the
 # dashboard means that minute: without it "preemptions per minute" summed lifetime totals.
 ENGINE_CUMULATIVE = ENGINE_METRICS[3:]
-# Request-size bands: the engine's histogram buckets for tokens per request, kept as separate
-# counters with an `le` dimension so the dashboard can stack "requests per minute in each band". Which
-# edges: `promptTokenBands` and `outputTokenBands` in config.yaml, validated against the engine's fixed
-# bucket edges in hardware.py. One metric series per edge, plus one.
 
 
 class ServingStack(Stack):
@@ -124,8 +120,8 @@ class ServingStack(Stack):
         for key in ("modelId", "quantization", "extraArgs", "toolCallParser", "reasoningParser"):
             if cfg.get(key) is not None and not isinstance(cfg[key], str):
                 raise ConfigError(
-                    f"{key} must be a string (got {type(cfg[key]).__name__}: {cfg[key]!r}).\n"
-                    "  extraArgs is one line, quoted like a shell command, not a YAML list."
+                    f"{key} must be a string (got {type(cfg[key]).__name__}: {cfg[key]!r})."
+                    + ("\n  extraArgs is one line, quoted like a shell command, not a YAML list." if key == "extraArgs" else "")
                 )
         cfg["modelId"] = cfg["modelId"].strip()
         cfg["quantization"] = _given(cfg.get("quantization"), "").strip()

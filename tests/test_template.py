@@ -1249,10 +1249,15 @@ def test_cumulative_engine_metrics_become_per_minute_deltas():
     minute" summed lifetime totals and the request averages were lifetime averages."""
     cfg = collector_config(synth())
     assert "cumulativetodelta" in cfg and "[filter/shortlist, transform/bands, cumulativetodelta]" in cfg
+    deltas = cfg.split("cumulativetodelta:")[1].split("exporters:")[0]
     for name in ("vllm:num_preemptions_total", "vllm:time_to_first_token_seconds",
                  "vllm:e2e_request_latency_seconds", "vllm:request_prompt_tokens",
                  "vllm:request_generation_tokens"):
-        assert name in cfg.split("cumulativetodelta:")[1].split("exporters:")[0], name
+        assert name in deltas, name
+    # The gauges are derived by position from ENGINE_METRICS; a gauge routed through the delta step would
+    # read as "change in queue depth per minute" and look like an idle fleet.
+    for gauge in ("vllm:num_requests_waiting", "vllm:num_requests_running", "vllm:kv_cache_usage_perc"):
+        assert gauge not in deltas, gauge
 
 
 def test_the_latency_widget_says_what_the_load_balancer_times():
@@ -1345,3 +1350,34 @@ def test_sticky_sessions_is_a_cookie_on_the_target_group_and_off_by_default():
     assert attrs.get("stickiness.enabled", "false") == "false"
     with pytest.raises(ConfigError):
         synth(stickySessions="yes please")
+
+
+def test_the_measured_thresholds_and_timeouts_are_the_ones_deployed():
+    """Every value here was set after a failure: the health check that marked a loading engine failed,
+    the alarm window that cried wolf during deploys, the volume throughput that made loading take
+    eight minutes, the termination protection that held instances for an hour. A template change that
+    nudges one of them must fail a test, not a deployment."""
+    t = synth(latencyAlarmSeconds=8)
+    tg = only(t, "AWS::ElasticLoadBalancingV2::TargetGroup")
+    assert (tg["HealthCheckIntervalSeconds"], tg["HealthCheckTimeoutSeconds"],
+            tg["HealthyThresholdCount"], tg["UnhealthyThresholdCount"]) == (30, 10, 2, 5)
+    svc = only(t, "AWS::ECS::Service")
+    assert svc["HealthCheckGracePeriodSeconds"] == 1800
+    assert only(t, "AWS::Logs::LogGroup")["RetentionInDays"] == 7
+    lt = only(t, "AWS::EC2::LaunchTemplate")["LaunchTemplateData"]
+    ebs = lt["BlockDeviceMappings"][0]["Ebs"]
+    assert (ebs["VolumeSize"], ebs["Throughput"], ebs["Iops"], ebs["Encrypted"]) == (500, 500, 6000, True)
+    assert lt["MetadataOptions"]["HttpTokens"] == "required"
+    cp = only(t, "AWS::ECS::CapacityProvider")["AutoScalingGroupProvider"]
+    assert cp["ManagedTerminationProtection"] == "DISABLED"
+    alarms = {a["Properties"]["AlarmName"]: a["Properties"] for a in t["Resources"].values()
+              if a["Type"] == "AWS::CloudWatch::Alarm"}
+    by_suffix = {k.split("-", 1)[1] if "-" in k else k: v for k, v in alarms.items()}
+    unhealthy = next(v for k, v in alarms.items() if k.endswith("engines-unhealthy"))
+    erroring = next(v for k, v in alarms.items() if k.endswith("load-balancer-erroring"))
+    slow = next(v for k, v in alarms.items() if k.endswith("too-slow"))
+    assert (unhealthy["Threshold"], unhealthy["EvaluationPeriods"]) == (0, 15)
+    assert (erroring["Threshold"], erroring["EvaluationPeriods"]) == (10, 2)
+    assert (slow["Threshold"], slow["EvaluationPeriods"]) == (8, 3)
+    roles = [r["Properties"] for r in t["Resources"].values() if r["Type"] == "AWS::IAM::Role"]
+    assert any("AmazonSSMManagedInstanceCore" in json.dumps(r.get("ManagedPolicyArns", [])) for r in roles)

@@ -44,8 +44,8 @@ WORKING_RESERVE_BYTES = 16 * 1024**3
 # and only blocks placement.
 CONTAINER_MEMORY_FRACTION = 0.60
 
-# Root volume. A 30B model is ~57 GiB and the serving image ~9 GB, and replacing a model leaves the
-# previous weights in the stopped container's writable layer, so space accumulates across restarts.
+# Root volume. A 30B model is ~57 GiB and the serving image ~9 GB, and the shared host cache keeps every
+# model the instance has served, so two checkpoints must fit after a `modelId` change.
 ROOT_VOLUME_GIB = 500
 # The gp3 default of 125 MB/s makes reading a 57 GiB model take ~8 minutes on every task start.
 ROOT_VOLUME_THROUGHPUT_MBPS = 500
@@ -434,8 +434,10 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     Fails loudly on values that produce a deployment which starts and then misbehaves, because those
     are far more expensive to diagnose than a synth-time error.
     """
+    # None and "" both mean "the default": `kvCacheDtype:` with nothing after it and `kvCacheDtype: ""` are
+    # the same intent, and "" used to turn a boolean key off and fail a numeric one.
     t = {**DEFAULT_TUNING,
-         **{k: v for k, v in _mapping(tuning, "tuning").items() if v is not None}}
+         **{k: v for k, v in _mapping(tuning, "tuning").items() if v is not None and v != ""}}
 
     util = _num(t["gpuMemoryUtilization"], "gpuMemoryUtilization", float)
     if not 0.50 <= util <= 0.97:
@@ -447,7 +449,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         )
     t["gpuMemoryUtilization"] = util
 
-    tp = _num(_given(t["tensorParallel"], 0), "tensorParallel")
+    tp = _num(t["tensorParallel"], "tensorParallel")
     if tp and tp not in (1, 2, 4, 8):
         raise ConfigError(f"tensorParallel must be 1, 2, 4 or 8 (got {tp}).")
     # Written back, like every other coerced value. Left unwritten, `tensorParallel: "2"` from YAML
@@ -464,7 +466,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
     # In-engine data parallelism: one engine owns tp x dp GPUs and runs dp attention groups over its own
     # request batches with the experts sharded across all of them (the MoE-serving topology). Without
     # expert parallelism it is only a more expensive way to run replicas, so it is refused.
-    dp = _num(_given(t["dataParallel"], 1), "dataParallel", minimum=1)
+    dp = _num(t["dataParallel"], "dataParallel", minimum=1)
     if dp > 1 and not _flag(t.get("enableExpertParallel"), "enableExpertParallel"):
         raise ConfigError(
             f"dataParallel={dp} without enableExpertParallel: true is just replicas with more overhead.\n"
@@ -475,7 +477,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         raise ConfigError(f"dataParallel={dp} needs {dp} GPUs but {inst.name} has {inst.gpus}.")
     t["dataParallel"] = dp
 
-    replicas = _num(_given(t["replicas"], 0), "replicas")
+    replicas = _num(t["replicas"], "replicas")
     if replicas < 0:
         raise ConfigError("replicas must be 0 (one engine per GPU) or a positive integer.")
     if tp and replicas and replicas * tp * dp > inst.gpus:
@@ -493,7 +495,7 @@ def validate_tuning(inst: Instance, tuning: dict) -> dict:
         t[key] = _num(t[key], key, minimum=0)
     t["maxNumSeqs"] = _num(t["maxNumSeqs"], "maxNumSeqs", minimum=1)
 
-    kv = str(_given(t["kvCacheDtype"], DEFAULT_TUNING["kvCacheDtype"]))
+    kv = str(t["kvCacheDtype"])
     if kv not in KV_CACHE_DTYPES:
         raise ConfigError(
             f"kvCacheDtype must be one of {', '.join(KV_CACHE_DTYPES)} (got {kv})."

@@ -342,7 +342,7 @@ def test_the_memory_pressure_warning_keys_off_footprint_not_precision():
 
 
 @pytest.mark.parametrize("written, means", [
-    ("false", False), ("FALSE", False), ("no", False), ("off", False), ("0", False), ("", False),
+    ("false", False), ("FALSE", False), ("no", False), ("off", False), ("0", False),
     ("true", True), ("TRUE", True), ("yes", True), ("on", True), ("1", True),
 ])
 def test_a_quoted_boolean_means_what_it_says(written, means):
@@ -391,7 +391,7 @@ def test_a_blank_numeric_config_value_is_a_config_error_not_a_traceback():
     `except ConfigError` to catch a coercion failure. A key left blank in YAML printed a raw
     ValueError traceback instead of the one-line message every other config mistake gets."""
     inst = get_instance("g7e.2xlarge")
-    for bad in ({"maxNumSeqs": ""}, {"gpuMemoryUtilization": "abc"}, {"tensorParallel": "x"}):
+    for bad in ({"maxNumSeqs": "abc"}, {"gpuMemoryUtilization": "abc"}, {"tensorParallel": "x"}):
         with pytest.raises(ConfigError):
             validate_tuning(inst, bad)
 
@@ -548,3 +548,11 @@ def test_data_parallel_reserves_tp_times_dp_gpus_and_needs_expert_parallelism():
     with pytest.raises(ConfigError, match="needs 16 GPUs"):
         validate_tuning(p5, {"tensorParallel": 4, "dataParallel": 2, "replicas": 2, "enableExpertParallel": True})
     assert validate_tuning(get_instance("g7e.2xlarge"), {})["dataParallel"] == 1, "off by default"
+
+
+def test_a_blank_value_means_the_default_for_every_tuning_key():
+    """`enablePrefixCaching: ""` used to turn prefix caching OFF (the blank matched the false spellings)
+    while `kvCacheDtype: ""` meant the default and `maxNumSeqs: ""` was an error: three rules for one
+    way of writing "nothing"."""
+    t = validate_tuning(get_instance("g7e.2xlarge"), {"enablePrefixCaching": "", "maxNumSeqs": "", "tensorParallel": ""})
+    assert t["enablePrefixCaching"] is True and t["maxNumSeqs"] == 256 and t["tensorParallel"] == 0
