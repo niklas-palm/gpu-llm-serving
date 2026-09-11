@@ -92,12 +92,12 @@ def score(gold: dict, pred: dict | None) -> tuple[int, int, int]:
     return tp, sum(p.values()) - tp, sum(g.values()) - tp
 
 
-def body(model: str, sentence: str, shots: list[tuple[str, dict]], mode: str) -> dict:
+def body(model: str, sentence: str, shots: list[tuple[str, dict]], mode: str, max_tokens: int = 300) -> dict:
     msgs = [{"role": "system", "content": SYSTEM}]
     for s, e in shots:
         msgs += [{"role": "user", "content": s}, {"role": "assistant", "content": json.dumps(e)}]
     msgs.append({"role": "user", "content": sentence})
-    b = {"model": model, "messages": msgs, "temperature": 0, "max_tokens": 300}
+    b = {"model": model, "messages": msgs, "temperature": 0, "max_tokens": max_tokens}
     if mode == "schema":
         b["response_format"] = {"type": "json_schema", "json_schema": {"name": "entities", "strict": True, "schema": SCHEMA}}
     elif mode == "json":
@@ -113,7 +113,7 @@ def run(a: argparse.Namespace, model: str, mode: str, docs: list, shots: list, o
         i, (sentence, gold) = i_doc
         t0 = time.perf_counter()
         try:
-            r = sess.post(f"{a.url}/v1/chat/completions", json=body(model, sentence, shots, mode), timeout=120)
+            r = sess.post(f"{a.url}/v1/chat/completions", json=body(model, sentence, shots, mode, a.max_tokens), timeout=120)
             text = r.json()["choices"][0]["message"]["content"] if r.status_code == 200 else ""
             err = "" if r.status_code == 200 else f"status {r.status_code}"
         except (requests.RequestException, ValueError, KeyError) as e:
@@ -161,6 +161,8 @@ def main() -> int:
     ap.add_argument("--modes", default="schema,free", help="comma-separated: schema, json, free")
     ap.add_argument("--limit", type=int, default=1000, help="sentences, in dataset order")
     ap.add_argument("--concurrency", type=int, default=32)
+    ap.add_argument("--max-tokens", type=int, default=300,
+                    help="answer cap; a reasoning model spends this on its thinking first, so give it 2,000 or more")
     ap.add_argument("--output", default="", help="directory for per-sentence results; default a temp dir")
     ap.add_argument("--tag", default="", help="label written to --csv rows")
     ap.add_argument("--csv", default="", help="append one row per mode here")
